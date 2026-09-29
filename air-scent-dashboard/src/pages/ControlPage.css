@@ -35,6 +35,7 @@
   margin-bottom: 10px;
   flex: 1 1 auto;
   min-height: 0;
+  overflow: hidden;
 }
 
 .control-channel-field {
@@ -126,6 +127,9 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
   gap: 8px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .control-location-tab {
@@ -278,20 +282,21 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 6px;
+  flex-shrink: 0;
 }
 
 .control-scent-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  height: 44px;
-  padding: 0 10px;
+  gap: 8px;
+  min-height: 84px;
+  padding: 12px 10px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: #ffffff;
   color: var(--text-main);
-  font-size: 13px;
+  font-size: 18px;
   font-weight: 850;
   cursor: pointer;
   touch-action: manipulation;
@@ -348,6 +353,8 @@
 
 .control-scent-body {
   gap: 10px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .control-scent-body > .control-field-label {

@@ -23,14 +23,9 @@ import {
   saveWardScents,
   wardDisplayName,
 } from "../utils/wardStorage";
-import { readingForWard } from "../utils/scentVisual";
 import {
-  LEVEL_TARGET_PCT,
   clampTargetPercent,
-  fragranceToTone,
   labelForTargetPercent,
-  liveTrackPercent,
-  matchingScentPercent,
 } from "../utils/fragranceIntensity";
 import useSharedWards from "../hooks/useSharedWards";
 import useScentMissionNav, {
@@ -68,7 +63,6 @@ function ControlPage({
   onToggleAirPurifier,
   onCycleAirPurifierMode,
   fragranceOn,
-  fragranceLevel,
   setFragranceLevel,
   setCurrentFragrance,
   fragranceBlend,
@@ -160,43 +154,6 @@ function ControlPage({
   }, [view, onAiSessionChange]);
 
   const activeAirMode = airPurifierOn ? airPurifierMode : 1;
-
-  const setLevel = (next) => {
-    if (!selectedWardId) return;
-    const level = clampTargetPercent(next);
-    setFragranceLevel(level);
-    persistScent(selectedWardId, { level });
-  };
-
-  const levelEnabled = Boolean(selectedWard);
-  const targetPct = clampTargetPercent(fragranceLevel);
-  const targetLabel = labelForTargetPercent(targetPct);
-  const wardReading = useMemo(
-    () =>
-      readingForWard(
-        mqttAirQuality?.rooms,
-        selectedWard,
-        mqttAirQuality?.label
-          ? {
-              label: mqttAirQuality.label,
-              confidence: mqttAirQuality.confidence,
-              tone: mqttAirQuality.tone,
-              isWoody: mqttAirQuality.isWoody,
-            }
-          : null
-      ),
-    [mqttAirQuality, selectedWard]
-  );
-  const expectedTone = useMemo(
-    () => fragranceToTone(getWardScent(wardScents, selectedWardId).fragrance, fragranceBlend),
-    [fragranceBlend, selectedWardId, wardScents]
-  );
-  const livePct = matchingScentPercent(wardReading, expectedTone);
-  const liveProgress = liveTrackPercent(livePct);
-  const liveLabel =
-    wardReading?.label && Number.isFinite(Number(wardReading.confidence))
-      ? `${wardReading.label} ${Number(wardReading.confidence).toFixed(0)}%`
-      : "와드 향기 대기 중";
 
   const handleApplyFragrance = (payload) => {
     const wardId = selectedWardId || loadSelectedWardId(wards);
@@ -420,59 +377,6 @@ function ControlPage({
                   <Sparkles size={16} />
                   <span>AI 추천받기</span>
                 </button>
-              </div>
-            </div>
-
-            <div className="control-field-label">
-              <span>강도</span>
-              <strong>
-                {targetPct}%
-                <em className="control-level-target">{targetLabel}</em>
-              </strong>
-            </div>
-            <p className="control-level-live">
-              현재 <strong>{liveLabel}</strong>
-              {fragranceOn && Number.isFinite(livePct) ? (
-                <span>
-                  {livePct >= targetPct ? " · 목표 도달" : " · 분사량 조절 중"}
-                </span>
-              ) : null}
-            </p>
-
-            <div
-              className={`control-level-slider ${levelEnabled ? "" : "is-disabled"}`}
-            >
-              <input
-                type="range"
-                className="control-level-range"
-                min={LEVEL_TARGET_PCT[1]}
-                max={LEVEL_TARGET_PCT[3]}
-                step={1}
-                value={targetPct}
-                disabled={!levelEnabled}
-                aria-label="향기 강도"
-                aria-valuetext={`${targetLabel} ${targetPct}%`}
-                onChange={(event) => setLevel(Number(event.target.value))}
-                style={{
-                  "--level-progress": `${liveTrackPercent(targetPct) ?? 0}%`,
-                  "--live-progress":
-                    liveProgress == null ? "0%" : `${liveProgress}%`,
-                }}
-              />
-              <div className="control-level-ticks" aria-hidden="true">
-                {[1, 2, 3].map((step) => (
-                  <span
-                    key={step}
-                    className={
-                      targetLabel === labelForTargetPercent(LEVEL_TARGET_PCT[step])
-                        ? "active"
-                        : ""
-                    }
-                  >
-                    {labelForTargetPercent(LEVEL_TARGET_PCT[step])}
-                    <small>{LEVEL_TARGET_PCT[step]}%</small>
-                  </span>
-                ))}
               </div>
             </div>
 
