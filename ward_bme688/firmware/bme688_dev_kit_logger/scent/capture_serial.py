@@ -26,6 +26,12 @@ try:
 except ImportError:
     sys.exit("pyserial 필요: pip install pyserial")
 
+# bme688_stream_full.ino 의 출력 컬럼 (SD 로거와 동일) — parse_devkit_csv.py 호환
+HEADER = ("TimeStamp(ms),Sensor Index,Temperature(deg C),Pressure(Pa),"
+          "Humidity(%),Gas Resistance(ohm),Gas Index,Meas Index,IDAC,"
+          "Status,Gas Valid,Heater Stable")
+N_FIELDS = len(HEADER.split(","))
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -49,11 +55,14 @@ def main():
     except serial.SerialException as e:
         sys.exit(f"시리얼 열기 실패: {e}\n시리얼 모니터가 열려있지 않은지 확인하세요.")
 
-    rows = 0
-    header_written = False
+    rows, bad = 0, 0
     t0 = time.time()
     try:
         with open(out_path, "w", encoding="utf-8", newline="") as f:
+            # 헤더는 우리가 직접 쓴다.
+            # (펌웨어는 부팅 때 한 번만 헤더를 내보내므로, 돌아가는 중에 붙으면 못 받는다)
+            f.write(HEADER + "\n")
+
             while True:
                 raw = ser.readline()
                 if not raw:
@@ -62,13 +71,19 @@ def main():
                 if not line:
                     continue
                 if line.startswith("#"):
-                    print(f"  {line}")          # 안내 줄은 화면에만
+                    print(f"  {line}")              # 안내 줄은 화면에만
                     continue
-                # 헤더(TimeStamp...) 또는 데이터 행
+                if line.startswith("TimeStamp"):
+                    continue                        # 펌웨어 헤더 — 이미 우리가 씀
+
+                # 깨진 줄 거르기: 필드 수가 맞고 첫 칸이 숫자여야 함
+                # (녹화 시작 시점에 전송 중이던 줄이 잘려 들어오는 경우 방지)
+                parts = line.split(",")
+                if len(parts) != N_FIELDS or not parts[0].isdigit():
+                    bad += 1
+                    continue
+
                 f.write(line + "\n")
-                if not header_written and line.startswith("TimeStamp"):
-                    header_written = True
-                    continue
                 rows += 1
                 if rows % 200 == 0:
                     dt = time.time() - t0
@@ -78,8 +93,10 @@ def main():
     finally:
         ser.close()
         print(f"\n\n[완료] {rows}행 저장 → {out_path}")
-        if not header_written:
-            print("주의: 헤더를 못 받았습니다. 펌웨어가 bme688_stream_full 인지 확인하세요.")
+        if bad:
+            print(f"  (깨진 줄 {bad}개 자동 제외)")
+        if rows == 0:
+            print("주의: 데이터가 없습니다. 포트/펌웨어(bme688_stream_full)를 확인하세요.")
 
 
 if __name__ == "__main__":

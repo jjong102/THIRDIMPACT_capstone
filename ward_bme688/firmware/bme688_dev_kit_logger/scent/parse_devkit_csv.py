@@ -30,6 +30,12 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+# Windows 콘솔(cp949)에서 '—' 같은 문자 출력 시 UnicodeEncodeError 방지
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, OSError):
+    pass
+
 import numpy as np
 import pandas as pd
 
