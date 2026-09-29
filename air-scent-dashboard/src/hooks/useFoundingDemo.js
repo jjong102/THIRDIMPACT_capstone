@@ -5,12 +5,20 @@ import { speakText } from "../services/ttsSpeak";
 const STORAGE_KEY = "air-scent:founding-demo";
 const TRIGGER_PERCENT = 20;
 const PURIFY_MS = 10000;
-const SPRAY_MS = 3000;
+const SPRAY_MS = 10000;
+/** 공청 OFF 멘트가 끝난 뒤 발향 전까지 대기 (꺼지는 중인 공청이 향을 빨아들이지 않게) */
+const PRE_SPRAY_WAIT_MS = 3000;
+/**
+ * 펌웨어는 M9xx 를 9초 켜고 1초 쉬는 주기로 반복한다. 같은 명령을 다시 받으면 릴레이는
+ * 켠 채로 주기만 처음부터 세므로, 중간에 한 번 더 보내 SPRAY_MS 동안 끊기지 않게 한다.
+ */
+const SPRAY_REFRESH_MS = 5000;
 /** 향 전환 시 전부 끄고 쉬는 시간 (릴레이 동시 전환 전류로 아두이노가 리셋되는 것 완화) */
 const SWITCH_GAP_MS = 600;
 /** 아두이노 재부팅(부트로더 + setup) 대기 후 재전송 */
 const REBOOT_WAIT_MS = 2000;
 const MAX_RETRIES = 3;
+const PURIFY_DONE_TTS = "공기청정을 완료하였습니다.";
 const DONE_TTS = "발향청정을 완료하였습니다.";
 
 /**
@@ -74,7 +82,8 @@ function looksRebooted(result) {
 }
 
 /**
- * 창설시연: scent ≥ 20% → 공청 10초 → 공청 OFF → 3번/4번/5번 핀 3초씩
+ * 창설시연: scent ≥ 20% → 공청 10초 → 공청 OFF → 공청 완료 멘트 → 3초 대기
+ * → 3번/4번/5번 핀 10초씩
  * → TTS → air 가 들어올 때까지 대기 → 다시 scent ≥ 20% 이면 반복
  */
 export default function useFoundingDemo({
@@ -141,6 +150,10 @@ export default function useFoundingDemo({
       await sendChecked("OFF000", { airPurifierOn: false }, alive);
       if (!alive()) return;
 
+      await speakText(PURIFY_DONE_TTS);
+      await wait(PRE_SPRAY_WAIT_MS);
+      if (!alive()) return;
+
       setPhaseSafe("spraying");
       for (const [index, step] of SPRAY_STEPS.entries()) {
         if (!alive()) return;
@@ -154,9 +167,13 @@ export default function useFoundingDemo({
         setSprayLabel(`${step.pin}번 ${step.label}`);
         // 공유 상태에 fragranceOn/채널을 올리면 다른 화면이 ON00x 를 자동 전송해
         // 공청을 다시 켜고 미스트를 덮어쓰므로, 시퀀스 중에는 꺼짐 상태로 둔다.
-        // 재전송으로 늦어져도 실제로 켜진 시점부터 3초를 센다.
+        // 재전송으로 늦어져도 실제로 켜진 시점부터 SPRAY_MS 를 센다.
         await sendChecked(step.command, { airPurifierOn: false }, alive);
-        await wait(SPRAY_MS);
+        const sprayStart = Date.now();
+        await wait(SPRAY_REFRESH_MS);
+        if (!alive()) return;
+        await sendChecked(step.command, { airPurifierOn: false }, alive);
+        await wait(SPRAY_MS - (Date.now() - sprayStart));
       }
       if (!alive()) return;
 

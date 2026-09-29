@@ -46,7 +46,7 @@ export async function stopSharedFragranceSpray() {
   }
 
   try {
-    await sendFragranceCommands(["ON000"], {
+    await sendFragranceCommands(["M000"], {
       fragranceOn: false,
       fragranceDiffusing: false,
       fragranceChannels: { musk: false, lavender: false, woody: false },

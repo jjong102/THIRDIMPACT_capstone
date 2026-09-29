@@ -33,7 +33,7 @@ void setup() {
   allMistOff();
 
   Serial.println("READY");
-  Serial.println("예시: ON133 / OFF015 / ON000 / OFF000 / MODE / SYNC0-3");
+  Serial.println("예시: ON133 / OFF015 / M133 / M000 / MODE / SYNC0-3");
 }
 
 void loop() {
@@ -79,6 +79,11 @@ void readCommand() {
       } else {
         Serial.println("FAN OFF 상태라 MODE 불가");
       }
+    }
+
+    // Mxyz: 팬은 그대로 두고 미스트만 바꾼다. (MODE 와 겹치지 않게 숫자 3자리만 허용)
+    else if (cmd.startsWith("M") && cmd.length() == 4 && isMistDigits(cmd.substring(1))) {
+      setMist(cmd.substring(1));
     }
 
     else if (cmd.startsWith("SYNC") && cmd.length() == 5) {
@@ -130,6 +135,13 @@ void fanModeChange() {
 
   Serial.print("FAN MODE ");
   Serial.println(fanMode);
+}
+
+bool isMistDigits(String digits) {
+  for (int i = 0; i < 3; i++) {
+    if (!isDigit(digits.charAt(i))) return false;
+  }
+  return true;
 }
 
 void setMist(String mistCmd) {
