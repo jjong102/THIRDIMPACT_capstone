@@ -42,7 +42,6 @@ export function blendToWeights(blend) {
 
 export function buildMistDigits({
   fragranceOn,
-  fragranceBlend,
   fragranceChannels,
   mistScale = 1,
 }) {
@@ -51,46 +50,24 @@ export function buildMistDigits({
   }
 
   const active = MIST_CHANNELS.map((id) => fragranceChannels?.[id] === true);
-  const activeCount = active.filter(Boolean).length;
-
-  if (activeCount === 0) {
+  if (!active.some(Boolean)) {
     return "000";
   }
 
-  if (activeCount === 1) {
-    return applyMistScale(
-      active.map((isOn) => (isOn ? "9" : "0")).join(""),
-      mistScale
-    );
-  }
-
-  const values = MIST_CHANNELS.map((id, index) =>
-    active[index] ? fragranceBlend?.[id] ?? 0 : 0
-  );
-  const distributed = distributeWeights(
-    values.every((value) => value === 0)
-      ? active.map((isOn) => (isOn ? 1 : 0))
-      : values
-  );
-
+  // 켜진 채널은 모두 같은 시간 분사한다. 블렌드 비율로 나누면 수동으로 켠 채널이
+  // 남은 레시피 비율(예: Woody 100%) 때문에 1초만 켜졌다 꺼진다.
   return applyMistScale(
-    distributed
-      .map((weight, index) => (active[index] ? String(Math.max(1, weight)) : "0"))
-      .join(""),
+    active.map((isOn) => (isOn ? "9" : "0")).join(""),
     mistScale
   );
 }
 
-/**
- * ON/OFF 는 팬 릴레이와 미스트를 같이 바꾼다.
- * 향만 끌 때는 OFF 를 쓰면 공기청정기도 꺼지므로, 팬이 켜져 있으면 ON000 으로 미스트만 끈다.
- */
+/** air_control.ino: M133 미스트만 켜기, M000 미스트만 끄기 (팬은 그대로) */
 export function buildFragranceCommand({
   fragranceOn,
   fragranceBlend,
   fragranceChannels,
   mistScale = 1,
-  airPurifierOn = false,
 }) {
   const mist = buildMistDigits({
     fragranceOn,
@@ -99,16 +76,9 @@ export function buildFragranceCommand({
     mistScale,
   });
 
-  if (mist === "000") {
-    return {
-      mist,
-      command: airPurifierOn ? "ON000" : null,
-    };
-  }
-
   return {
     mist,
-    command: `ON${mist}`,
+    command: `M${mist}`,
   };
 }
 
