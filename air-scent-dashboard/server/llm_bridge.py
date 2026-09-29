@@ -9,6 +9,7 @@ import re
 import ssl
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -520,9 +521,31 @@ def on_mqtt_connect(client, userdata, flags, rc) -> None:
     mqtt_error = f"MQTT 연결 실패 (rc={rc})"
 
 
-def on_mqtt_disconnect(client, userdata, rc) -> None:
-    global mqtt_connected
+_mqtt_retry_log_at = 0.0
+
+
+def _log_mqtt_retry(message: str) -> None:
+    global _mqtt_retry_log_at
+    now = time.monotonic()
+    if _mqtt_retry_log_at and now - _mqtt_retry_log_at < 30:
+        return
+    _mqtt_retry_log_at = now
+    print(message, file=sys.stderr)
+
+
+def on_mqtt_connect_fail(client, userdata) -> None:
+    global mqtt_connected, mqtt_error
     mqtt_connected = False
+    mqtt_error = "MQTT 연결 실패, 재시도 중"
+    _log_mqtt_retry(f"[llm-bridge] {mqtt_error}")
+
+
+def on_mqtt_disconnect(client, userdata, rc) -> None:
+    global mqtt_connected, mqtt_error
+    mqtt_connected = False
+    if rc != 0:
+        mqtt_error = f"MQTT 연결 끊김, 재시도 중 (rc={rc})"
+        _log_mqtt_retry(f"[llm-bridge] {mqtt_error}")
 
 
 def start_mqtt_publisher() -> None:
@@ -537,17 +560,12 @@ def start_mqtt_publisher() -> None:
     client.tls_set(cert_reqs=ssl.CERT_NONE)
     client.tls_insecure_set(True)
     client.on_connect = on_mqtt_connect
+    client.on_connect_fail = on_mqtt_connect_fail
     client.on_disconnect = on_mqtt_disconnect
-
+    client.reconnect_delay_set(min_delay=2, max_delay=30)
+    client.connect_async(MQTT_BROKER, MQTT_PORT, keepalive=60)
     mqtt_client = client
-
-    try:
-        client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
-        client.loop_start()
-    except Exception as exc:  # noqa: BLE001
-        mqtt_error = str(exc)
-        mqtt_connected = False
-        print(f"[llm-bridge] MQTT 오류: {exc}", file=sys.stderr)
+    client.loop_start()
 
 
 class LlmBridgeHandler(BaseHTTPRequestHandler):

@@ -399,14 +399,37 @@ def on_connect(client, userdata, flags, rc) -> None:
     print(f"[mqtt-bridge] {mqtt_error}", file=sys.stderr)
 
 
+_retry_log_at: dict[str, float] = {}
+
+
+def _log_retry(tag: str, message: str) -> None:
+    now = time.monotonic()
+    last = _retry_log_at.get(tag, 0.0)
+    if last and now - last < 30:
+        return
+    _retry_log_at[tag] = now
+    print(message, file=sys.stderr)
+
+
+def on_connect_fail(client, userdata) -> None:
+    global mqtt_connected, mqtt_error
+
+    tag = _broker_tag(userdata)
+    mqtt_brokers_up.discard(tag)
+    mqtt_connected = bool(mqtt_brokers_up)
+    mqtt_error = f"MQTT 연결 실패, 재시도 중 ({tag})"
+    _log_retry(tag, f"[mqtt-bridge] {mqtt_error}")
+
+
 def on_disconnect(client, userdata, rc) -> None:
-    global mqtt_connected
+    global mqtt_connected, mqtt_error
 
     tag = _broker_tag(userdata)
     mqtt_brokers_up.discard(tag)
     mqtt_connected = bool(mqtt_brokers_up)
     if rc != 0:
-        print(f"[mqtt-bridge] 연결 끊김 (rc={rc}, {tag})", file=sys.stderr)
+        mqtt_error = f"MQTT 연결 끊김, 재시도 중 (rc={rc}, {tag})"
+        _log_retry(tag, f"[mqtt-bridge] {mqtt_error}")
 
 
 def on_message(client, userdata, msg) -> None:
@@ -443,7 +466,7 @@ def on_message(client, userdata, msg) -> None:
 
 
 def _run_mqtt_client(broker: str, tag: str) -> None:
-    global mqtt_error, mqtt_connected
+    global mqtt_error
 
     if mqtt is None:
         mqtt_error = "paho-mqtt 미설치 (pip install paho-mqtt)"
@@ -460,17 +483,13 @@ def _run_mqtt_client(broker: str, tag: str) -> None:
     client.tls_set(cert_reqs=ssl.CERT_NONE)
     client.tls_insecure_set(True)
     client.on_connect = on_connect
+    client.on_connect_fail = on_connect_fail
     client.on_disconnect = on_disconnect
     client.on_message = on_message
-
-    try:
-        client.connect(broker, MQTT_PORT, keepalive=60)
-        client.loop_forever()
-    except Exception as exc:  # noqa: BLE001
-        mqtt_brokers_up.discard(tag)
-        mqtt_connected = bool(mqtt_brokers_up)
-        mqtt_error = str(exc)
-        print(f"[mqtt-bridge] 오류 ({tag}): {exc}", file=sys.stderr)
+    # DNS가 부팅 직후 실패해도 connect()에서 스레드가 죽지 않게 비동기 연결 + 백오프
+    client.reconnect_delay_set(min_delay=2, max_delay=30)
+    client.connect_async(broker, MQTT_PORT, keepalive=60)
+    client.loop_forever(retry_first_connection=True)
 
 
 def start_mqtt_client() -> None:
