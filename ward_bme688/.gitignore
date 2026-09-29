@@ -27,3 +27,8 @@ confusion_matrix*.png
 *.bmerawdata
 *.bmelabelinfo
 BME688_Datalogger_Log*.csv
+
+# 수집 원본 녹화 / 라벨링 결과 / 파싱 산출물 (로컬 보관)
+**/recordings/
+**/scent/data/
+**/scent/*.csv

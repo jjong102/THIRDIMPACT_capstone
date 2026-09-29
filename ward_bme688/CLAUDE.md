@@ -19,8 +19,8 @@ Bosch **BME688** 가스센서로 **향(냄새)을 분류**하고, 서보+향수�
 ward_bme688/
 ├── firmware/     ESP32/Arduino 스케치 (각 폴더 = 스케치 1개)
 │   ├── bme688_sel_esp32/            [추론] ESP32 Feather에서 BSEC selectivity → WiFi/MQTT(HiveMQ) 발행 (이 모듈의 메인)
-│   ├── bme688_dev_kit_logger/       [수집] 단일 히터 프로파일 → SD CSV (10차원)
-│   ├── bme688_multiprofile_logger/  [수집] 히터 프로파일 4종 병행 → SD CSV (40차원, 최신)
+│   ├── bme688_dev_kit_logger/       [수집] 단일 HP-354 → SD CSV (10차원). scent/에 파싱·학습·라벨링 도구
+│   ├── bme688_stream_full/          [수집] 단일 HP-354 전측정 시리얼 스트리밍 (SD 없이 노트북 직결)
 │   ├── bme688_serial_stream/        [추론] raw를 USB 시리얼로 스트리밍 → PC sklearn 판정
 │   ├── bme688_bsec_infer/           [추론] AI-Studio 4클래스 모델을 BSEC로 온디바이스 실행
 │   ├── my_bme688/                   Bosch 순정 bme68x_demo_sample (BLE+datalogger, 참고 베이스)
