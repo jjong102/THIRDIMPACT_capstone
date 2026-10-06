@@ -1,0 +1,9 @@
+{
+  "recommendations": [
+    "platformio.platformio-ide",
+    "ms-python.python",
+    "dbaeumer.vscode-eslint",
+    "ms-iot.vscode-ros",
+    "editorconfig.editorconfig"
+  ]
+}

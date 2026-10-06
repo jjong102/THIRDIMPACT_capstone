@@ -83,7 +83,8 @@ compile_commands.json
 # -----------------------------------------------------
 #  Editor / IDE
 # -----------------------------------------------------
-.vscode/
+**/.vscode/*
+!/.vscode/extensions.json
 .idea/
 .cursor/
 .clangd/

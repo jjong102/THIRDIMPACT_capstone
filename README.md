@@ -23,12 +23,14 @@
 공기청정 → 발향을 수행하고 원위치로 복귀합니다. ROS 2 Humble 자율주행 스택, React 터치
 대시보드, Arduino 발향 컨트롤러로 구성됩니다.
 
+실행 방법은 [air-scent-dashboard/README.md](air-scent-dashboard/README.md), 센서는 [ward_bme688/README.md](ward_bme688/README.md)를 참고하세요.
+
 ---
 
 ## 1. 저장소 구조
 
 ```
-2026ESWContest_free_THIRDIMPACT/
+THIRDIMPACT_capstone/
 ├── slam_ros/                        # ROS 2 워크스페이스 (로봇 · Jetson)
 │   └── src/
 │       ├── all_in_one_package/      # [자체]  통합 런치 + 자체 개발 노드
@@ -42,14 +44,16 @@
 │       ├── amr_msgs/                # [활용]  커스텀 메시지 정의
 │       └── ros2_laser_scan_merger/  # [미사용] 2-LiDAR 병합 (최종 구성 제외)
 │
-└── air-scent-dashboard/             # 대시보드 (터치 패널 PC)
-    ├── src/                         # [자체]  React 19 + Vite UI
-    ├── server/                      # [자체]  Python HTTP 브리지
-    ├── firmware/                    # [자체]  Arduino 발향 컨트롤러
-    ├── mqtt/                        # [자체]  MQTT 공기질 수신
-    └── scripts/                     # [자체]  키오스크 · DDS · 네트워크 설정
+├── air-scent-dashboard/             # 대시보드 (발향부 Jetson · 터치 패널)
+│   ├── src/                         # [자체]  React 19 + Vite UI
+│   ├── server/                      # [자체]  Python HTTP 브리지
+│   ├── GDM/                         # [자체]  ROS 2 공기질 맵 노드 (MQTT → ROS)
+│   └── scripts/                     # [자체]  키오스크 · DDS · 네트워크 설정
+│
+├── firmware/air_control/            # [자체]  Arduino 발향 컨트롤러 (PlatformIO)
+├── ward_bme688/                     # [자체]  방별 BME688 향 분류 센서 (ESP32 → MQTT)
+└── docs/                            # 특허 · 기획 문서
 ```
-
 | 표기 | 의미 |
 |---|---|
 | **[자체]** | THIRDIMPACT가 새로 작성 |
@@ -175,8 +179,8 @@ sequenceDiagram
 | `nav_debug_logger.py` | 로봇 포즈 · 목표 · `velocity_smoother` 전후 `cmd_vel` · 액션 상태를 CSV로 기록. goal_checker 허용오차 진입 순간을 표시해 "목표에 도달하고도 정지하지 못하는" 현상의 원인을 규명한 계측 노드 |
 | `air-scent-dashboard/src/**` | React UI 전체 (페이지 · 훅 · 서비스 · 유틸). Vite 템플릿에서 시작해 전량 작성 |
 | `air-scent-dashboard/server/**` | Python HTTP 브리지. 주행 · 공기질 · 발향 · LLM · STT · TTS. 표준 라이브러리 `http.server` 기반 |
-| `air-scent-dashboard/firmware/**` | Arduino Uno 발향 컨트롤러 (PlatformIO). 미스트 3채널 + 확산 팬 제어 |
-| `air-scent-dashboard/mqtt/**` | HiveMQ 공기질 판정값 수신 |
+| `firmware/air_control/**` | Arduino Uno 발향 컨트롤러 (PlatformIO). 미스트 3채널 + 확산 팬 제어 |
+| `ward_bme688/**` | BME688 8채널 향 분류(BSEC2 selectivity) → HiveMQ 발행 펌웨어 · 학습 도구 · 수신기 |
 | `air-scent-dashboard/scripts/**` | 키오스크 실행, CycloneDDS 설정, 로봇 LAN 고정, ROS 2 설치 스크립트 |
 
 ---
