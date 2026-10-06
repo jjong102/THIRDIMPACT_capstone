@@ -1,6 +1,6 @@
 #!/bin/bash
 
-cd ~/Documents/air-scent-dashboard
+cd ~/THIRDIMPACT_capstone/air-scent-dashboard
 
 pkill -f "vite" 2>/dev/null
 

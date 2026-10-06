@@ -11,5 +11,5 @@ if [[ -s "$NVM_DIR/nvm.sh" ]]; then
   set -u
 fi
 
-cd /home/third_impact/Documents/air-scent-dashboard
+cd /home/third_impact/THIRDIMPACT_capstone/air-scent-dashboard
 exec npm run dev -- --host 0.0.0.0 --port 5173

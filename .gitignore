@@ -103,3 +103,15 @@ Thumbs.db
 # -----------------------------------------------------
 *.log
 *.gpg
+
+# -----------------------------------------------------
+#  PlatformIO (firmware/)
+# -----------------------------------------------------
+.pio/
+
+# macOS resource forks
+._*
+
+# runtime UI state written by the server
+**/server/.move-ui-state.json
+**/server/.speaker-volume.json

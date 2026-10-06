@@ -54,4 +54,4 @@ grep -q 'ROS_LOCALHOST_ONLY=0' "$HOME/.bashrc" \
 echo
 echo "설치 완료. 새 터미널에서:"
 echo "  source ~/.bashrc"
-echo "  python3 ~/Documents/air-scent-dashboard/scripts/ros/jetson_receiver.py"
+echo "  python3 ~/THIRDIMPACT_capstone/air-scent-dashboard/scripts/ros/jetson_receiver.py"
