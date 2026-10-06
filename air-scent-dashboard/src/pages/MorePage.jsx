@@ -13,7 +13,7 @@ import {
 } from "../data/screensaverCharacters";
 import { fetchSystemHosts, requestSystemPower } from "../services/systemPower";
 import { fetchSttHealth } from "../services/sttTranscribe";
-import { fetchSpeakerVolume, setSpeakerVolume, speakText } from "../services/ttsSpeak";
+import { fetchSpeakerVolume, fetchVoiceClips, playVoiceClip, setSpeakerVolume, speakText } from "../services/ttsSpeak";
 import { setLivingScentDemo } from "../services/mqttAirQuality";
 import { AIR_PURIFIER_MODE_LABELS } from "../utils/airPurifierCommand";
 import { clampTargetPercent } from "../utils/fragranceIntensity";
@@ -196,6 +196,7 @@ const MORE_TABS = [
   { id: "control", label: "제어", Icon: Wind },
   { id: "demo", label: "시연", Icon: Sparkles },
   { id: "screen", label: "화면", Icon: Eye },
+  { id: "voice", label: "음성", Icon: Volume2 },
 ];
 const MORE_TAB_ALIASES = {
   power: "device",
@@ -246,6 +247,11 @@ function MorePage({
   });
   const [sttBusy, setSttBusy] = useState(false);
   const [demoBusy, setDemoBusy] = useState(false);
+  const [voiceBusyId, setVoiceBusyId] = useState(null);
+  const [voiceClips, setVoiceClips] = useState([]);
+  const [voiceLoading, setVoiceLoading] = useState(false);
+  const [voiceLoaded, setVoiceLoaded] = useState(false);
+  const [voiceMessage, setVoiceMessage] = useState("");
   const logBodyRef = useRef(null);
   const selectedCharacter = getScreensaverCharacter(screensaverCharacterId);
   const mqttLogs = useMemo(
@@ -418,6 +424,40 @@ function MorePage({
       await onReconnectArduino?.();
     } finally {
       setArduinoBusy(false);
+    }
+  };
+
+  const loadVoiceClips = async () => {
+    if (voiceLoading) return;
+    setVoiceLoading(true);
+    setVoiceMessage("");
+    try {
+      const clips = await fetchVoiceClips();
+      setVoiceClips(clips);
+      setVoiceLoaded(true);
+      if (clips.length === 0) {
+        setVoiceMessage("폴더에 녹음 파일이 없습니다.");
+      }
+    } catch (error) {
+      setVoiceClips([]);
+      setVoiceLoaded(true);
+      setVoiceMessage(error instanceof Error ? error.message : "녹음 목록을 읽지 못했습니다");
+    } finally {
+      setVoiceLoading(false);
+    }
+  };
+
+  const playVoice = async (clip) => {
+    if (voiceBusyId) return;
+    setVoiceBusyId(clip.file);
+    setVoiceMessage("");
+    try {
+      const result = await playVoiceClip(clip.file);
+      if (!result?.ok) {
+        setVoiceMessage(result?.error || "재생하지 못했습니다");
+      }
+    } finally {
+      setVoiceBusyId(null);
     }
   };
 
@@ -805,6 +845,58 @@ function MorePage({
                 </span>
               </button>
             ) : null}
+          </section>
+        ) : null}
+
+        {activeTab === "voice" ? (
+          <section className="more-air-status-card more-tab-card more-voice-card">
+            <header className="more-air-status-header">
+              <div className="more-demo-icon" aria-hidden="true">
+                <Volume2 size={20} strokeWidth={2.4} />
+              </div>
+              <div className="more-air-status-copy">
+                <p className="more-air-status-label">음성</p>
+                <h1>녹음 재생</h1>
+                <p className="more-air-status-desc">
+                  public/voice-clips 에 넣은 녹음이 스피커로 나갑니다.
+                </p>
+              </div>
+            </header>
+            <button
+              type="button"
+              className="more-voice-load"
+              onClick={() => void loadVoiceClips()}
+              disabled={voiceLoading}
+            >
+              <RefreshCw size={18} strokeWidth={2.6} />
+              <span>{voiceLoading ? "불러오는 중" : "로드하기"}</span>
+            </button>
+            {voiceLoaded ? (
+              <div className="more-voice-list" role="group" aria-label="녹음 음성">
+                {voiceClips.map((clip) => {
+                  const busy = voiceBusyId === clip.file;
+                  return (
+                    <button
+                      key={clip.file}
+                      type="button"
+                      className={`more-voice-btn${busy ? " is-busy" : ""}`}
+                      disabled={voiceBusyId !== null}
+                      onClick={() => void playVoice(clip)}
+                    >
+                      <Play size={18} strokeWidth={2.6} />
+                      <strong>{clip.label.replaceAll("_", " ")}</strong>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+            {voiceMessage ? (
+              <p className="more-voice-message is-error">{voiceMessage}</p>
+            ) : voiceLoaded ? null : (
+              <p className="more-voice-message">
+                녹음 파일을 폴더에 넣고 로드하기를 누르세요.
+              </p>
+            )}
           </section>
         ) : null}
 
