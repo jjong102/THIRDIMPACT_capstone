@@ -23,18 +23,13 @@ except ImportError:  # pragma: no cover
     mqtt = None  # type: ignore
 
 PORT = int(os.environ.get("MQTT_BRIDGE_PORT", "5175"))
-MQTT_BROKER = os.environ.get(
-    "MQTT_BROKER", "e694bf432d234100929a519ed0bbec82.s1.eu.hivemq.cloud"
-)
+MQTT_BROKER = os.environ.get("MQTT_BROKER", "")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", "8883"))
-MQTT_USER = os.environ.get("MQTT_USER", "third_impact")
-MQTT_PASS = os.environ.get("MQTT_PASS", "Ti000000")
+MQTT_USER = os.environ.get("MQTT_USER", "")
+MQTT_PASS = os.environ.get("MQTT_PASS", "")
 # GDM과 동일: sensor/air_quality 또는 sensor/air_quality/<room_id>
 MQTT_TOPIC = os.environ.get("MQTT_TOPIC", "sensor/air_quality/#")
-MQTT_BROKER_FLORAL = os.environ.get(
-    "MQTT_BROKER_FLORAL",
-    "e694bf432d234100929a519ed0bbec82.s1.eu.hivemq.cloud",
-)
+MQTT_BROKER_FLORAL = os.environ.get("MQTT_BROKER_FLORAL", MQTT_BROKER)
 
 PAYLOAD_RE = re.compile(r"([A-Za-z가-힣_][A-Za-z가-힣_ ]*?)\s*\(\s*(\d+(?:\.\d+)?)\s*%\s*\)")
 WOODY_RE = re.compile(r"woody|우드", re.IGNORECASE)
@@ -493,6 +488,12 @@ def _run_mqtt_client(broker: str, tag: str) -> None:
 
 
 def start_mqtt_client() -> None:
+    global mqtt_error
+    if not MQTT_BROKER:
+        mqtt_error = "MQTT_BROKER 환경 변수가 설정되지 않았습니다 (.env.local 확인)"
+        print(f"[mqtt-bridge] {mqtt_error}", file=sys.stderr)
+        return
+
     brokers = [(MQTT_BROKER, "main")]
     if MQTT_BROKER_FLORAL and MQTT_BROKER_FLORAL != MQTT_BROKER:
         brokers.append((MQTT_BROKER_FLORAL, "floral"))

@@ -35,12 +35,10 @@ if NIM_MODEL in {
     NIM_MODEL = "google/gemma-4-31b-it"
 NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY", "")
 
-MQTT_BROKER = os.environ.get(
-    "MQTT_BROKER", "e694bf432d234100929a519ed0bbec82.s1.eu.hivemq.cloud"
-)
+MQTT_BROKER = os.environ.get("MQTT_BROKER", "")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", "8883"))
-MQTT_USER = os.environ.get("MQTT_USER", "third_impact")
-MQTT_PASS = os.environ.get("MQTT_PASS", "Ti000000")
+MQTT_USER = os.environ.get("MQTT_USER", "")
+MQTT_PASS = os.environ.get("MQTT_PASS", "")
 MQTT_CONTROL_TOPIC = os.environ.get(
     "MQTT_CONTROL_TOPIC", "device/fragrance/command"
 )
@@ -553,6 +551,10 @@ def start_mqtt_publisher() -> None:
 
     if mqtt is None:
         mqtt_error = "paho-mqtt 미설치"
+        return
+    if not MQTT_BROKER:
+        mqtt_error = "MQTT_BROKER 환경 변수가 설정되지 않았습니다 (.env.local 확인)"
+        print(f"[llm-bridge] {mqtt_error}", file=sys.stderr)
         return
 
     client = mqtt.Client(client_id="Dashboard_LLM_Control", protocol=mqtt.MQTTv311)
