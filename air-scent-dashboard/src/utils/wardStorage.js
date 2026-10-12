@@ -16,19 +16,19 @@ export const DEFAULT_WARDS = [
 
 export const FRAGRANCE_PRESETS = [
   {
-    id: "Woody",
-    label: "Woody",
-    blend: { musk: 100, lavender: 0, woody: 0 },
+    id: "Mint",
+    label: "Peppermint",
+    blend: { mint: 100, lavender: 0, orange: 0 },
   },
   {
-    id: "Floral",
-    label: "Floral",
-    blend: { musk: 0, lavender: 100, woody: 0 },
+    id: "Lavender",
+    label: "Lavender",
+    blend: { mint: 0, lavender: 100, orange: 0 },
   },
   {
-    id: "Citrus",
-    label: "Citrus",
-    blend: { musk: 0, lavender: 0, woody: 100 },
+    id: "Orange",
+    label: "Orange",
+    blend: { mint: 0, lavender: 0, orange: 100 },
   },
 ];
 
@@ -183,7 +183,7 @@ export function getWardScent(scents, wardId) {
 
 export function summarizeBlend(blend) {
   if (!blend) return "—";
-  return `M${blend.musk} L${blend.lavender} W${blend.woody}`;
+  return `W${blend.mint} F${blend.lavender} C${blend.orange}`;
 }
 
 export function loadHomeScentWardIds() {

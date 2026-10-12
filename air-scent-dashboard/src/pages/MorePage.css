@@ -1069,21 +1069,21 @@
   color: #5c4d14;
 }
 
-.more-demo-btn.scent-citrus.selected {
+.more-demo-btn.scent-orange.selected {
   border-color: #fcd34d;
   background: #fffbeb;
 }
 
-.more-demo-btn.scent-citrus.selected strong {
+.more-demo-btn.scent-orange.selected strong {
   color: #b45309;
 }
 
-.more-demo-btn.scent-woody.selected {
+.more-demo-btn.scent-mint.selected {
   border-color: #c4b5fd;
   background: #f5f3ff;
 }
 
-.more-demo-btn.scent-woody.selected strong {
+.more-demo-btn.scent-mint.selected strong {
   color: #6d28d9;
 }
 
@@ -1106,7 +1106,7 @@
   background: #cbd5e1;
 }
 
-.more-fragrance-btn.channel-musk .more-fragrance-dot {
+.more-fragrance-btn.channel-mint .more-fragrance-dot {
   background: #8b5cf6;
 }
 
@@ -1114,7 +1114,7 @@
   background: #3b82f6;
 }
 
-.more-fragrance-btn.channel-woody .more-fragrance-dot {
+.more-fragrance-btn.channel-orange .more-fragrance-dot {
   background: #d97706;
 }
 
@@ -1124,7 +1124,7 @@
   box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.14);
 }
 
-.more-fragrance-btn.channel-musk.selected {
+.more-fragrance-btn.channel-mint.selected {
   border-color: #c4b5fd;
   background: #f5f3ff;
 }
@@ -1134,7 +1134,7 @@
   background: #eff6ff;
 }
 
-.more-fragrance-btn.channel-woody.selected {
+.more-fragrance-btn.channel-orange.selected {
   border-color: #fcd34d;
   background: #fffbeb;
 }
@@ -1147,7 +1147,7 @@
   color: #1d4ed8;
 }
 
-.more-fragrance-btn.channel-woody.selected strong {
+.more-fragrance-btn.channel-orange.selected strong {
   color: #b45309;
 }
 

@@ -294,9 +294,9 @@ function App() {
       if (payload.blend) {
         setFragranceBlend(payload.blend);
         setFragranceChannels({
-          musk: Number(payload.blend.musk) > 0,
+          mint: Number(payload.blend.mint) > 0,
           lavender: Number(payload.blend.lavender) > 0,
-          woody: Number(payload.blend.woody) > 0,
+          orange: Number(payload.blend.orange) > 0,
         });
       }
       if (payload.intensity) {
@@ -311,7 +311,7 @@ function App() {
     setRecommendedFragrance(scentDisplayName(fragrance));
     setFragranceDispenseComplete(false);
     if (!(typeof payload === "object" && payload?.blend)) {
-      setFragranceChannels({ musk: true, lavender: true, woody: true });
+      setFragranceChannels({ mint: true, lavender: true, orange: true });
     }
 
     saveFragranceSession({
@@ -328,11 +328,11 @@ function App() {
       fragranceChannels:
         typeof payload === "object" && payload?.blend
           ? {
-              musk: Number(payload.blend.musk) > 0,
+              mint: Number(payload.blend.mint) > 0,
               lavender: Number(payload.blend.lavender) > 0,
-              woody: Number(payload.blend.woody) > 0,
+              orange: Number(payload.blend.orange) > 0,
             }
-          : { musk: true, lavender: true, woody: true },
+          : { mint: true, lavender: true, orange: true },
       fragranceDispenseComplete: false,
     });
 

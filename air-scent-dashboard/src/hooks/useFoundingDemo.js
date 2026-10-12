@@ -23,16 +23,16 @@ const DONE_TTS = "발향청정을 완료하였습니다.";
 
 /**
  * main_opt 펌웨어: ON000/OFF000 = 2번 핀(공청 버튼, 상태 기억), M### = 미스트만.
- * 숫자 순서: 3번 우디(musk), 4번 플로럴(lavender), 5번 시트러스(woody)
+ * 숫자 순서: 3번 페퍼민트(mint), 4번 라벤더(lavender), 5번 오렌지(orange)
  */
 /** 핀 순서대로 3번 → 4번 → 5번 */
 const SPRAY_STEPS = [
-  { command: "M900", pin: 3, label: "Woody" },
-  { command: "M090", pin: 4, label: "Floral" },
-  { command: "M009", pin: 5, label: "Citrus" },
+  { command: "M900", pin: 3, label: "Peppermint" },
+  { command: "M090", pin: 4, label: "Lavender" },
+  { command: "M009", pin: 5, label: "Orange" },
 ];
 
-const NO_CHANNELS = { musk: false, lavender: false, woody: false };
+const NO_CHANNELS = { mint: false, lavender: false, orange: false };
 const IDLE_STATE = {
   fragranceOn: false,
   fragranceDiffusing: false,

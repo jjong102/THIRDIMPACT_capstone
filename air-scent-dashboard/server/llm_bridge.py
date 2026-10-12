@@ -90,11 +90,11 @@ def build_system_prompt(recipes: list[dict]) -> str:
 
 ## 우선순위
 1. 사용자가 말한 장면·향·기분. 이게 있으면 환경은 무시하세요.
-   - 꽃, 꽃밭, 정원, 라벤더, 쉬고 싶다, 피곤 → Floral(R002)
-   - 숲, 나무, 우디, 따뜻, 차분 → Woody(R001)
-   - 레몬, 시트러스, 상쾌하게 깨고 싶다 → Citrus(R003)
-2. 말이 아주 애매할 때만 시간대: 아침/낮=Citrus, 저녁=Woody, 밤=Floral
-3. 덥다고 해서 Citrus로 바꾸지 마세요. 꽃밭에서 쉬고 싶으면 더워도 Floral입니다.
+   - 꽃, 꽃밭, 정원, 라벤더, 쉬고 싶다, 피곤, 따뜻, 차분, 포근 → Lavender(R002)
+   - 페퍼민트, 민트, 시원, 상쾌, 집중, 머리 맑게, 숲 → Mint(R001)
+   - 오렌지, 귤, 레몬, 자몽, 상큼, 활력, 기분 전환 → Orange(R003)
+2. 말이 아주 애매할 때만 시간대: 아침=Orange, 낮=Mint, 저녁/밤=Lavender
+3. 덥다고 해서 사용자 말을 무시하지 마세요. 꽃밭에서 쉬고 싶으면 더워도 Lavender입니다.
 
 ## 규칙
 - 반드시 아래 등록된 레시피 중 하나의 recipe_id만 선택하세요.
@@ -102,10 +102,9 @@ def build_system_prompt(recipes: list[dict]) -> str:
 - intensity는 1~3 정수. 세기를 안 말하면 2.
 - duration_seconds는 5~30 정수.
 - reason은 한국어 한두 문장. 사용자가 한 말을 받아서 이 향을 고른 이유를 말하세요. 날씨/온도 이야기는 하지 마세요.
-- 향 이름은 반드시 Woody, Floral, Citrus 영어만 쓰세요. 우디/플로럴/시트러스라고 쓰지 마세요.
-- 예: "꽃밭에서 쉬고 싶다고 하셔서 Floral이 좋을 것 같아요."
+- reason 에서 향 이름은 반드시 Peppermint, Lavender, Orange 영어로 쓰세요. 페퍼민트/라벤더/오렌지라고 쓰지 마세요.
+- 예: "꽃밭에서 쉬고 싶다고 하셔서 Lavender가 좋을 것 같아요."
 - 확인 질문은 reason에 넣지 마세요.
-- 실내에 우디 냄새가 강하게 있으면 Woody(R001)만 피하세요. 그래도 사용자 말이 꽃/휴식이면 Floral을 고르세요.
 
 ## 등록된 레시피
 {catalog}
@@ -126,7 +125,7 @@ def build_user_prompt(payload: dict) -> str:
 
     return json.dumps(
         {
-            "지시": "사용자 말을 최우선으로 향을 고르세요. 온도가 높아도 꽃밭/휴식 말이면 Floral입니다. 향 이름은 Woody/Floral/Citrus만 쓰세요.",
+            "지시": "사용자 말을 최우선으로 향을 고르세요. 온도가 높아도 꽃밭/휴식 말이면 Lavender입니다. 향 이름은 Peppermint/Lavender/Orange만 쓰세요.",
             "직전_추천_recipe_id": _last_recipe_id,
             "사용자_말": user.get("needNow")
             or user.get("desiredState")
@@ -140,7 +139,6 @@ def build_user_prompt(payload: dict) -> str:
             "냄새_분류_MQTT": {
                 "라벨": mqtt_data.get("label"),
                 "신뢰도": mqtt_data.get("confidence"),
-                "우디_감지": mqtt_data.get("isWoody"),
             },
             "시간대": payload.get("timePeriod"),
         },
@@ -195,10 +193,7 @@ def call_nim_chat(messages: list[dict]) -> str:
 def _blocked_recipe_ids(payload: dict) -> set[str]:
     blocked: set[str] = set()
     bme = payload.get("bme688", {})
-    mqtt_data = payload.get("mqtt", {})
     humidity = bme.get("humidity")
-    if mqtt_data.get("isWoody"):
-        blocked.add("R001")
     if humidity is not None and humidity < 30:
         blocked.add("R003")
     return blocked
@@ -246,12 +241,12 @@ def infer_recipe_from_speech(spoken: str) -> str | None:
 
     if any(
         k in text
-        for k in ["꽃밭", "꽃길", "꽃", "플로럴", "라벤더", "장미", "벚꽃", "정원", "수국"]
+        for k in ["꽃밭", "꽃길", "꽃", "라벤더", "장미", "벚꽃", "정원", "수국"]
     ):
         return "R002"
-    if any(k in text for k in ["우디", "우드", "숲속", "숲", "나무", "편백", "모닥불", "캠핑"]):
+    if any(k in text for k in ["페퍼민트", "민트", "박하", "숲속", "숲", "나무", "편백"]):
         return "R001"
-    if any(k in text for k in ["시트러스", "레몬", "오렌지", "자몽", "라임", "유자"]):
+    if any(k in text for k in ["오렌지", "귤", "레몬", "자몽", "라임", "유자"]):
         return "R003"
     if any(
         k in text
@@ -259,10 +254,10 @@ def infer_recipe_from_speech(spoken: str) -> str | None:
     ):
         return "R002"
     if any(k in text for k in ["따뜻", "차분", "안정", "포근", "묵직"]):
+        return "R002"
+    if any(k in text for k in ["시원", "상쾌", "집중", "공부", "맑게", "더워", "더움", "답답", "탁해"]):
         return "R001"
-    if any(k in text for k in ["상쾌", "활력", "집중", "깨고", "산뜻"]):
-        return "R003"
-    if any(k in text for k in ["더워", "더움", "답답", "탁해"]):
+    if any(k in text for k in ["상큼", "활력", "기분 전환", "기분전환", "깨고", "산뜻"]):
         return "R003"
     return None
 
@@ -346,9 +341,9 @@ def parse_intensity_from_text(text: str) -> int:
 def _english_scent_reason(reason: str) -> str:
     text = str(reason or "")
     return (
-        text.replace("플로럴", "Floral")
-        .replace("시트러스", "Citrus")
-        .replace("우디", "Woody")
+        text.replace("라벤더", "Lavender")
+        .replace("오렌지", "Orange")
+        .replace("페퍼민트", "Peppermint")
     )
 
 
@@ -450,12 +445,9 @@ def validate_dispense(payload: dict) -> dict:
         except ValueError:
             pass
 
-    if context.get("mqtt", {}).get("isWoody") and recipe_id == "R001":
-        errors.append("실내 우디 냄새 감지 — 우디 향 사용 불가")
-
     bme = context.get("bme688", {})
     if bme.get("humidity") is not None and bme["humidity"] < 30 and recipe_id == "R003":
-        errors.append("습도 낮음 — 시트러스 향 사용 불가")
+        errors.append("습도 낮음 — 오렌지 향 사용 불가")
 
     for channel, share in recipe["blend"].items():
         if share <= 0:
@@ -475,7 +467,7 @@ def validate_dispense(payload: dict) -> dict:
 
 
 def blend_to_weights(blend: dict) -> str:
-    channels = ["musk", "lavender", "woody"]
+    channels = ["mint", "lavender", "orange"]
     values = [blend.get(ch, 0) for ch in channels]
     total = sum(values) or 1
     raw = [v / total * 9 for v in values]

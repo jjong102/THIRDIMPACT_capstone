@@ -305,9 +305,9 @@
   transition: stroke 0.35s ease;
 }
 
-.slam-room-poly.scent-woody,
+.slam-room-poly.scent-orange,
 .slam-room-poly.scent-lavender,
-.slam-room-poly.scent-musk,
+.slam-room-poly.scent-mint,
 .slam-room-poly.scent-fresh,
 .slam-room-poly.scent-other {
   stroke-dasharray: none;

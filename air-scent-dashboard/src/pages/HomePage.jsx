@@ -12,7 +12,7 @@ import {
   wardDisplayName,
 } from "../utils/wardStorage";
 import { getScentVisual, readingForWard, isKitchenWard } from "../utils/scentVisual";
-import { scentDisplayName } from "../data/scentRecipes";
+import { scentDisplayName, scentLabel } from "../data/scentRecipes";
 import {
   clampTargetPercent,
   labelForTargetPercent,
@@ -69,7 +69,7 @@ function globalReading(mqttAirQuality) {
   return {
     label: mqttAirQuality.label,
     confidence: mqttAirQuality.confidence,
-    isWoody: mqttAirQuality.isWoody,
+    isOrange: mqttAirQuality.isOrange,
     tone: mqttAirQuality.tone,
     receivedAt: mqttAirQuality.receivedAt,
   };
@@ -301,7 +301,7 @@ function HomePage({
                       <em>{visual.detail}</em>
                       <p className="home-ward-fragrance-line">
                         <SprayCan size={14} strokeWidth={2.4} />
-                        {scentDisplayName(scent.fragrance)}
+                        {scentLabel(scentDisplayName(scent.fragrance))}
                         <span>· {formatLevel(scent.level)}</span>
                       </p>
                     </div>

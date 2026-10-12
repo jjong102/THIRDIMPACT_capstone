@@ -12,7 +12,7 @@ const initialState = {
   mqttConnected: false,
   label: null,
   confidence: null,
-  isWoody: false,
+  isOrange: false,
   tone: "unknown",
   receivedAt: null,
   error: null,
@@ -26,16 +26,16 @@ const initialState = {
 function normalizeRoom(entry) {
   if (!entry || typeof entry !== "object") return null;
   const label = displayWardScentLabel(entry.label) ?? entry.label ?? null;
-  const isWoody = Boolean(entry.is_woody ?? entry.isWoody);
+  const isOrange = Boolean(entry.is_orange ?? entry.isOrange);
   const tone =
     entry.tone && entry.tone !== "unknown"
       ? entry.tone
-      : resolveScentTone({ label, isWoody, raw: entry.raw });
+      : resolveScentTone({ label, isOrange, raw: entry.raw });
   return {
     label,
     confidence:
       typeof entry.confidence === "number" ? entry.confidence : null,
-    isWoody,
+    isOrange,
     tone,
     receivedAt: entry.received_at ?? entry.receivedAt ?? null,
     raw: entry.raw ?? null,
@@ -60,13 +60,13 @@ function buildState(data, health = null) {
   rooms.room2 = rooms.room_2;
 
   const label = displayWardScentLabel(data.label) ?? data.label ?? null;
-  const isWoody = Boolean(data.is_woody);
+  const isOrange = Boolean(data.is_orange);
   const tone =
     data.tone && data.tone !== "unknown"
       ? data.tone
       : resolveScentTone({
           label,
-          isWoody,
+          isOrange,
           raw: data.raw,
         });
 
@@ -79,7 +79,7 @@ function buildState(data, health = null) {
     mqttConnected,
     label,
     confidence: typeof data.confidence === "number" ? data.confidence : null,
-    isWoody,
+    isOrange,
     tone,
     receivedAt: data.received_at ?? data.receivedAt ?? null,
     error: data.error ?? health?.error ?? null,
@@ -103,7 +103,7 @@ function mergeSticky(prev, next) {
     ...next,
     label: prev.label,
     confidence: prev.confidence,
-    isWoody: prev.isWoody,
+    isOrange: prev.isOrange,
     tone: prev.tone,
     receivedAt: prev.receivedAt,
     hasData: true,

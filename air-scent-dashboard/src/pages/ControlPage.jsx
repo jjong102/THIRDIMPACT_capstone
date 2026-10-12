@@ -12,7 +12,7 @@ import {
 
 import FragranceBlendPage from "./FragranceBlendPage";
 import AiRecommendPage from "./AiRecommendPage";
-import { scentDisplayName } from "../data/scentRecipes";
+import { scentDisplayName, scentLabel } from "../data/scentRecipes";
 import {
   AIR_PURIFIER_MODE,
   AIR_PURIFIER_MODE_KEYS,
@@ -350,7 +350,7 @@ function ControlPage({
                             ) : null}
                           </span>
                           <strong className="control-location-fragrance">
-                            {scentDisplayName(scent.fragrance)}
+                            {scentLabel(scentDisplayName(scent.fragrance))}
                           </strong>
                           <em className="control-location-level">
                               {labelForTargetPercent(scent.level)} {clampTargetPercent(scent.level)}%

@@ -18,6 +18,7 @@ import { setLivingScentDemo } from "../services/mqttAirQuality";
 import { AIR_PURIFIER_MODE, AIR_PURIFIER_MODE_LABELS } from "../utils/airPurifierCommand";
 import { clampTargetPercent } from "../utils/fragranceIntensity";
 import { displayWardScentLabel } from "../utils/scentVisual";
+import { sensorLabelTone } from "../utils/sensorLabels";
 import {
   getWardScent,
   loadWardScents,
@@ -26,6 +27,7 @@ import {
 } from "../utils/wardStorage";
 
 import "./MorePage.css";
+import { scentLabel } from "../data/scentRecipes";
 
 function CharacterPreview({ characterId }) {
   switch (characterId) {
@@ -141,10 +143,10 @@ function livingSensorStatus(mqttAirQuality) {
 }
 
 const LIVING_DEMO_SCENTS = [
-  { id: "fresh", label: "Fresh Air", hint: "공기", mqttLabel: "Fresh Air" },
-  { id: "odor", label: "odor", hint: "악취", mqttLabel: "Floral" },
-  { id: "citrus", label: "Citrus", hint: "시트러스", mqttLabel: "woody" },
-  { id: "woody", label: "Woody", hint: "우디", mqttLabel: "musk" },
+  { id: "fresh", label: "Fresh Air", hint: "공기" },
+  { id: "odor", label: "odor", hint: "악취" },
+  { id: "orange", label: "Orange", hint: "오렌지" },
+  { id: "mint", label: "Peppermint", hint: "페퍼민트" },
 ];
 
 function describeSttStatus(payload) {
@@ -185,9 +187,9 @@ function livingTargetPercent() {
 }
 
 const FRAGRANCE_CHANNELS = [
-  { id: "musk", label: "Woody", hint: "우디" },
-  { id: "lavender", label: "Floral", hint: "플로럴" },
-  { id: "woody", label: "Citrus", hint: "시트러스" },
+  { id: "mint", label: "Peppermint", hint: "페퍼민트" },
+  { id: "lavender", label: "Lavender", hint: "라벤더" },
+  { id: "orange", label: "Orange", hint: "오렌지" },
 ];
 
 const MORE_TAB_KEY = "air-scent:more-tab";
@@ -350,21 +352,19 @@ function MorePage({
 
   const livingDemoId = useMemo(() => {
     const label = displayWardScentLabel(mqttAirQuality?.label) ?? mqttAirQuality?.label ?? "";
-    const lower = String(label).toLowerCase();
-    if (/odor|floral|lavender|플로럴/.test(lower)) return "odor";
-    if (/fresh|air|공기/.test(lower)) return "fresh";
-    if (/citrus|시트러스/.test(lower)) return "citrus";
-    if (/woody|우디|musk|머스크/.test(lower)) return "woody";
-    return null;
+    const tone = sensorLabelTone(label);
+    if (tone === "lavender") return "odor";
+    return tone;
   }, [mqttAirQuality]);
 
-  const applyLivingDemo = async (mqttLabel) => {
+  /** demoId: fresh · odor · orange · mint — 센서 원래 라벨로는 서버가 바꾼다. */
+  const applyLivingDemo = async (demoId) => {
     if (demoBusy) return;
     setDemoBusy(true);
     try {
       await setLivingScentDemo(
-        mqttLabel,
-        mqttLabel ? livingTargetPercent() : null
+        demoId,
+        demoId ? livingTargetPercent() : null
       );
     } catch {
       // 다음 폴링에서 실제 값이 보임
@@ -798,7 +798,7 @@ function MorePage({
               </span>
               <strong>
                 {livingStatus.label
-                  ? `${livingStatus.label}${
+                  ? `${scentLabel(livingStatus.label)}${
                       livingStatus.confidence != null
                         ? ` ${Math.round(livingStatus.confidence)}%`
                         : ""
@@ -848,7 +848,7 @@ function MorePage({
                     className={`more-air-status-btn more-demo-btn scent-${option.id}${selected ? " selected" : ""}`}
                     aria-pressed={selected}
                     disabled={demoBusy}
-                    onClick={() => applyLivingDemo(option.mqttLabel)}
+                    onClick={() => applyLivingDemo(option.id)}
                   >
                     <strong>{option.label}</strong>
                     <span>{option.hint}</span>

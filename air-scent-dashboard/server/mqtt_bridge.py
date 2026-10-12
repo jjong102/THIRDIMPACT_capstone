@@ -29,20 +29,26 @@ MQTT_USER = os.environ.get("MQTT_USER", "")
 MQTT_PASS = os.environ.get("MQTT_PASS", "")
 # GDM과 동일: sensor/air_quality 또는 sensor/air_quality/<room_id>
 MQTT_TOPIC = os.environ.get("MQTT_TOPIC", "sensor/air_quality/#")
-MQTT_BROKER_FLORAL = os.environ.get("MQTT_BROKER_FLORAL", MQTT_BROKER)
+MQTT_BROKER_LAVENDER = os.environ.get("MQTT_BROKER_LAVENDER", MQTT_BROKER)
 
 PAYLOAD_RE = re.compile(r"([A-Za-z가-힣_][A-Za-z가-힣_ ]*?)\s*\(\s*(\d+(?:\.\d+)?)\s*%\s*\)")
-WOODY_RE = re.compile(r"woody|우드", re.IGNORECASE)
 FRESH_RE = re.compile(r"fresh|clean|무취|청정|air", re.IGNORECASE)
-LAVENDER_RE = re.compile(r"lavender|라벤더|floral|플로럴|odor", re.IGNORECASE)
-MUSK_RE = re.compile(r"musk|머스크", re.IGNORECASE)
+# 센서(ESP32 BME688)는 학습 모델의 클래스 이름을 그대로 보내는데, 이 이름이 실제 향과 어긋나 있다
+# (ward_bme688 학습 라벨 뒤바뀜). 센서를 다시 굽기 전까지 옛 라벨은 여기서만 해석한다.
+#   "woody" · "citrus" → orange   "musk" → mint   "floral" · "lavender" · "odor" → lavender (시연에선 악취)
+# 프론트 src/utils/sensorLabels.js 와 같은 규칙. 새 이름(orange / mint / lavender)도 알아듣는다.
+SENSOR_TONE_RULES = (
+    ("orange", re.compile(r"orange|오렌지|woody|citrus", re.IGNORECASE)),
+    ("lavender", re.compile(r"lavender|라벤더|floral|odor|악취", re.IGNORECASE)),
+    ("mint", re.compile(r"mint|민트|musk", re.IGNORECASE)),
+)
 
 latest_lock = threading.Lock()
 latest: dict = {
     "raw": None,
     "label": None,
     "confidence": None,
-    "is_woody": False,
+    "is_orange": False,
     "tone": "unknown",
     "received_at": None,
     "room_id": "default",
@@ -76,17 +82,14 @@ def append_log(kind: str, text: str) -> None:
 
 
 LIVING_ROOM_IDS = ("default", "room_1", "room1")
+# 더보기 시연 버튼 id → 시연 중 보여 줄 라벨 (MQTT 로 내보내지 않고 대시보드 안에서만 쓴다)
 DEMO_LABELS = {
     "fresh": "Fresh Air",
     "fresh air": "Fresh Air",
     "air": "Fresh Air",
-    "odor": "Floral",
-    "floral": "Floral",
-    "lavender": "Floral",
-    "citrus": "woody",
-    "woody": "woody",
-    "musk": "musk",
-    "우디": "musk",
+    "odor": "odor",
+    "orange": "Orange",
+    "mint": "Mint",
 }
 demo_generation = 0
 demo_override: dict | None = None
@@ -100,21 +103,18 @@ _live_odor_active = False
 def classify_tone(label: str | None) -> str:
     if not label:
         return "unknown"
-    # Fresh Air / air 단독을 woody보다 먼저
+    # Fresh Air / air 단독을 향 라벨보다 먼저
     if re.search(r"fresh\s*air|fresh|clean|무취|청정|(?<![A-Za-z])air(?![A-Za-z])", label, re.IGNORECASE):
         return "fresh"
-    if WOODY_RE.search(label):
-        return "woody"
-    if LAVENDER_RE.search(label):
-        return "lavender"
-    if MUSK_RE.search(label):
-        return "musk"
+    for tone, pattern in SENSOR_TONE_RULES:
+        if pattern.search(label):
+            return tone
     return "other"
 
 
 def parse_payload(payload: str) -> dict:
     text = payload.strip()
-    # Fresh Air(100%) / woody(98%) / 라벨 ( 90 % )
+    # Fresh Air(100%) / mint(98%) / 라벨 ( 90 % )
     match = re.search(
         r"(.+?)\s*\(\s*(\d+(?:\.\d+)?)\s*%\s*\)\s*$",
         text,
@@ -137,7 +137,7 @@ def parse_payload(payload: str) -> dict:
         "raw": text,
         "label": label,
         "confidence": confidence,
-        "is_woody": tone == "woody",
+        "is_orange": tone == "orange",
         "tone": tone,
     }
 
@@ -157,7 +157,7 @@ def _demo_entry(label: str, confidence: int) -> dict:
         "raw": raw,
         "label": label,
         "confidence": confidence,
-        "is_woody": tone == "woody",
+        "is_orange": tone == "orange",
         "tone": tone,
         "room_id": "default",
         "topic": "demo/living",
@@ -495,8 +495,8 @@ def start_mqtt_client() -> None:
         return
 
     brokers = [(MQTT_BROKER, "main")]
-    if MQTT_BROKER_FLORAL and MQTT_BROKER_FLORAL != MQTT_BROKER:
-        brokers.append((MQTT_BROKER_FLORAL, "floral"))
+    if MQTT_BROKER_LAVENDER and MQTT_BROKER_LAVENDER != MQTT_BROKER:
+        brokers.append((MQTT_BROKER_LAVENDER, "lavender"))
 
     for broker, tag in brokers[1:]:
         worker = threading.Thread(

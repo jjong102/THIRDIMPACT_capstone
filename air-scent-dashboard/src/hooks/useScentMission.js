@@ -50,7 +50,7 @@ function roomsFromPayload(data) {
       label: value.label ?? null,
       confidence:
         typeof value.confidence === "number" ? value.confidence : null,
-      isWoody: Boolean(value.is_woody ?? value.isWoody),
+      isOrange: Boolean(value.is_orange ?? value.isOrange),
       tone: value.tone ?? null,
       receivedAt: value.received_at ?? value.receivedAt ?? null,
       raw: value.raw ?? null,
@@ -137,7 +137,7 @@ export default function useScentMission({
           airPurifierOn: true,
           fragranceOn: false,
           fragranceDiffusing: false,
-          fragranceChannels: { musk: false, lavender: false, woody: false },
+          fragranceChannels: { mint: false, lavender: false, orange: false },
         });
       } catch {
         // Arduino hook retries on reconnect

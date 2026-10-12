@@ -1,7 +1,7 @@
 import { applyMistScale } from "./fragranceIntensity";
 
-/** MIST1 D3 우디(musk), MIST2 D4 플로럴(lavender), MIST3 D5 시트러스(woody) */
-export const MIST_CHANNELS = ["musk", "lavender", "woody"];
+/** 명령 Mxyz 자리 순서 = 펌웨어 MIST_MINT_PIN(D3), MIST_LAVENDER_PIN(D4), MIST_ORANGE_PIN(D5) */
+export const MIST_CHANNELS = ["mint", "lavender", "orange"];
 
 /** 펌웨어: 가중치 1 = 1000ms */
 export const LEVEL_UNIT_MS = {
@@ -55,7 +55,7 @@ export function buildMistDigits({
   }
 
   // 켜진 채널은 모두 같은 시간 분사한다. 블렌드 비율로 나누면 수동으로 켠 채널이
-  // 남은 레시피 비율(예: Woody 100%) 때문에 1초만 켜졌다 꺼진다.
+  // 남은 레시피 비율(예: Mint 100%) 때문에 1초만 켜졌다 꺼진다.
   return applyMistScale(
     active.map((isOn) => (isOn ? "9" : "0")).join(""),
     mistScale

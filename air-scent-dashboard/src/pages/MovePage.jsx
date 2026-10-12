@@ -311,7 +311,7 @@ function MovePage({
       ? {
           label: mqttAirQuality.label,
           confidence: mqttAirQuality.confidence,
-          isWoody: mqttAirQuality.isWoody,
+          isOrange: mqttAirQuality.isOrange,
           tone: mqttAirQuality.tone,
         }
       : null;
@@ -325,7 +325,7 @@ function MovePage({
         ? {
             label: mqttAirQuality.label,
             confidence: mqttAirQuality.confidence,
-            isWoody: mqttAirQuality.isWoody,
+            isOrange: mqttAirQuality.isOrange,
             tone: mqttAirQuality.tone,
             raw: mqttAirQuality.label,
           }

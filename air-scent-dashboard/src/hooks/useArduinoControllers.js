@@ -44,9 +44,9 @@ function sameBlend(a, b) {
   }
 
   return (
-    a?.musk === b?.musk &&
+    a?.mint === b?.mint &&
     a?.lavender === b?.lavender &&
-    a?.woody === b?.woody
+    a?.orange === b?.orange
   );
 }
 
@@ -64,15 +64,15 @@ function normalizeSharedState(raw) {
     airPurifierMode: mode >= 1 && mode <= 3 ? mode : 1,
     fragranceOn: Boolean(raw.fragranceOn),
     fragranceChannels: {
-      musk: Boolean(raw.fragranceChannels?.musk),
+      mint: Boolean(raw.fragranceChannels?.mint),
       lavender: Boolean(raw.fragranceChannels?.lavender),
-      woody: Boolean(raw.fragranceChannels?.woody),
+      orange: Boolean(raw.fragranceChannels?.orange),
     },
     fragranceLevel: clampTargetPercent(level),
     fragranceBlend: {
-      musk: Number(raw.fragranceBlend?.musk) || 0,
+      mint: Number(raw.fragranceBlend?.mint) || 0,
       lavender: Number(raw.fragranceBlend?.lavender) || 0,
-      woody: Number(raw.fragranceBlend?.woody) || 0,
+      orange: Number(raw.fragranceBlend?.orange) || 0,
     },
     fragranceDiffusing: Boolean(raw.fragranceDiffusing),
   };
@@ -633,7 +633,7 @@ export default function useArduinoControllers({
         fragranceStateRef.current;
       const base = isOn
         ? prev
-        : { musk: false, lavender: false, woody: false };
+        : { mint: false, lavender: false, orange: false };
       const nextOn = !isOn || !base[channel];
       const next = { ...base, [channel]: nextOn };
       const nextPower = Object.values(next).some(Boolean);

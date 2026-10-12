@@ -1,26 +1,26 @@
 [
   {
     "id": "R001",
-    "name": "Woody",
-    "displayName": "Woody",
-    "blend": { "musk": 100, "lavender": 0, "woody": 0 },
-    "tags": ["Woody", "우디", "안정", "편안", "따뜻", "집중"],
-    "description": "Woody scent for a warm, steady space."
+    "name": "Mint",
+    "displayName": "Mint",
+    "blend": { "mint": 100, "lavender": 0, "orange": 0 },
+    "tags": ["Mint", "페퍼민트", "민트", "시원", "상쾌", "집중"],
+    "description": "Peppermint scent for a cool, clear head."
   },
   {
     "id": "R002",
-    "name": "Floral",
-    "displayName": "Floral",
-    "blend": { "musk": 0, "lavender": 100, "woody": 0 },
-    "tags": ["Floral", "플로럴", "휴식", "수면", "편안", "스트레스"],
-    "description": "Floral scent to unwind and rest."
+    "name": "Lavender",
+    "displayName": "Lavender",
+    "blend": { "mint": 0, "lavender": 100, "orange": 0 },
+    "tags": ["Lavender", "라벤더", "휴식", "수면", "편안", "스트레스"],
+    "description": "Lavender scent to unwind and rest."
   },
   {
     "id": "R003",
-    "name": "Citrus",
-    "displayName": "Citrus",
-    "blend": { "musk": 0, "lavender": 0, "woody": 100 },
-    "tags": ["Citrus", "시트러스", "상쾌", "활력", "집중", "깨끗"],
-    "description": "Citrus scent for a fresh lift."
+    "name": "Orange",
+    "displayName": "Orange",
+    "blend": { "mint": 0, "lavender": 0, "orange": 100 },
+    "tags": ["Orange", "오렌지", "상큼", "활력", "기분 전환", "깨끗"],
+    "description": "Orange scent for a bright lift."
   }
 ]
