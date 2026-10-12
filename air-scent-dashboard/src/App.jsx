@@ -210,6 +210,7 @@ function App() {
     isFragranceSending,
     toggleAirPurifier,
     cycleAirPurifierMode,
+    selectAirPurifierMode,
     syncAirPurifierStatus,
     toggleFragrancePower,
     toggleFragranceChannel,
@@ -426,6 +427,9 @@ function App() {
             onSelectScreensaverCharacter={handleSelectScreensaverCharacter}
             airPurifierOn={airPurifierOn}
             airPurifierMode={airPurifierMode}
+            airPurifierSending={isAirSending}
+            onToggleAirPurifier={toggleAirPurifier}
+            onSelectAirPurifierMode={selectAirPurifierMode}
             onSetAirPurifierStatus={syncAirPurifierStatus}
             fragranceOn={fragranceOn}
             fragranceChannels={fragranceChannels}

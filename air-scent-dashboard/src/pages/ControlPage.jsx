@@ -13,7 +13,11 @@ import {
 import FragranceBlendPage from "./FragranceBlendPage";
 import AiRecommendPage from "./AiRecommendPage";
 import { scentDisplayName } from "../data/scentRecipes";
-import { AIR_PURIFIER_MODE_LABELS } from "../utils/airPurifierCommand";
+import {
+  AIR_PURIFIER_MODE,
+  AIR_PURIFIER_MODE_KEYS,
+  AIR_PURIFIER_MODE_LABELS,
+} from "../utils/airPurifierCommand";
 import {
   getWardScent,
   loadSelectedWardId,
@@ -36,11 +40,11 @@ import "./FragrancePage.css";
 import "./ControlPage.css";
 
 function AirModeIconDisplay({ mode }) {
-  if (mode === 2) {
+  if (mode === AIR_PURIFIER_MODE.SLEEP) {
     return <Moon size={26} strokeWidth={2.2} />;
   }
 
-  if (mode === 3) {
+  if (mode === AIR_PURIFIER_MODE.TURBO) {
     return (
       <span className="control-air-mode-badge" aria-hidden="true">
         <Heart size={16} strokeWidth={2.2} fill="currentColor" />
@@ -245,7 +249,7 @@ function ControlPage({
               <>
                 <button
                   type="button"
-                  className={`control-mode-btn center mode-${airPurifierMode}`}
+                  className={`control-mode-btn center mode-${AIR_PURIFIER_MODE_KEYS[airPurifierMode]}`}
                   disabled={airPurifierSending}
                   onClick={onCycleAirPurifierMode}
                   aria-label="공기청정 모드 변경"
@@ -275,7 +279,7 @@ function ControlPage({
                 aria-pressed={false}
               >
                 <div className="control-mode-btn-icon">
-                  <AirModeIconDisplay mode={1} />
+                  <AirModeIconDisplay mode={AIR_PURIFIER_MODE.AUTO} />
                 </div>
                 <strong>{airPurifierSending ? "전송 중..." : "꺼짐"}</strong>
                 <span>탭하여 켜기</span>

@@ -438,6 +438,37 @@
   padding: 10px 8px;
 }
 
+.more-air-control-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.more-air-sync-toggle {
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #ffffff;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-sub);
+}
+
+.more-air-sync-toggle.active {
+  border-color: #f59e0b;
+  background: #fffbeb;
+  color: #b45309;
+}
+
+.more-control-block .more-air-control-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.more-air-status-btn:disabled {
+  opacity: 0.6;
+}
+
 .more-host-grid {
   flex: 0 0 auto;
   min-height: 0;

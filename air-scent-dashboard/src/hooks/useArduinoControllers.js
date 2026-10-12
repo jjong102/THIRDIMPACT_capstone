@@ -11,6 +11,7 @@ import {
   buildAirOnCommand,
   buildAirOffCommand,
   buildAirSyncCommand,
+  getModeStepsToTarget,
   AIR_PURIFIER_MODE_COMMAND,
 } from "../utils/airPurifierCommand";
 import { buildFragranceCommand, buildMistDigits } from "../utils/fragranceCommand";
@@ -522,6 +523,37 @@ export default function useArduinoControllers({
     enqueueCommands([AIR_PURIFIER_MODE_COMMAND], "air");
   }, [airPurifierOn, enqueueCommands]);
 
+  /** 꺼져 있으면 켜고, 목표 모드까지 MODE 를 필요한 만큼 보낸다. */
+  const selectAirPurifierMode = useCallback(
+    (target) => {
+      const { on, mode } = airStatusRef.current;
+      const commands = [];
+      if (!on) {
+        const { fragranceOn: mistOn, fragranceChannels: channels, fragranceBlend: blend } =
+          fragranceStateRef.current;
+        const mistDigits = buildMistDigits({
+          fragranceOn: mistOn,
+          fragranceChannels: channels,
+          fragranceBlend: blend,
+          mistScale: mistScaleRef.current,
+        });
+        commands.push(mistDigits === "000" ? buildAirOnCommand() : `ON${mistDigits}`);
+      }
+      for (let i = 0; i < getModeStepsToTarget(mode, target); i++) {
+        commands.push(AIR_PURIFIER_MODE_COMMAND);
+      }
+      if (commands.length === 0) {
+        return;
+      }
+
+      airStatusRef.current = { on: true, mode: target };
+      setAirPurifierOn(true);
+      setAirPurifierMode(target);
+      enqueueCommands(commands, "air", { airPurifierOn: true, airPurifierMode: target });
+    },
+    [enqueueCommands, setAirPurifierOn, setAirPurifierMode],
+  );
+
   const syncAirPurifierStatus = useCallback(
     (on, mode = 1) => {
       const nextMode = mode >= 1 && mode <= 3 ? mode : 1;
@@ -677,6 +709,7 @@ export default function useArduinoControllers({
     isFragranceSending,
     toggleAirPurifier,
     cycleAirPurifierMode,
+    selectAirPurifierMode,
     syncAirPurifierStatus,
     toggleFragrancePower,
     toggleFragranceChannel,

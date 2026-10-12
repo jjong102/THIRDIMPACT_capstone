@@ -15,7 +15,7 @@ import { fetchSystemHosts, requestSystemPower } from "../services/systemPower";
 import { fetchSttHealth } from "../services/sttTranscribe";
 import { fetchSpeakerVolume, fetchVoiceClips, playVoiceClip, setSpeakerVolume, speakText } from "../services/ttsSpeak";
 import { setLivingScentDemo } from "../services/mqttAirQuality";
-import { AIR_PURIFIER_MODE_LABELS } from "../utils/airPurifierCommand";
+import { AIR_PURIFIER_MODE, AIR_PURIFIER_MODE_LABELS } from "../utils/airPurifierCommand";
 import { clampTargetPercent } from "../utils/fragranceIntensity";
 import { displayWardScentLabel } from "../utils/scentVisual";
 import {
@@ -76,9 +76,9 @@ function AirStatusIcon({ id }) {
 }
 
 const AIR_STATUS_OPTIONS = [
-  { id: "auto", label: "자동", hint: AIR_PURIFIER_MODE_LABELS[1], mode: 1 },
-  { id: "sleep", label: "수면", hint: AIR_PURIFIER_MODE_LABELS[2], mode: 2 },
-  { id: "turbo", label: "고속", hint: AIR_PURIFIER_MODE_LABELS[3], mode: 3 },
+  { id: "auto", label: "자동", hint: AIR_PURIFIER_MODE_LABELS[AIR_PURIFIER_MODE.AUTO], mode: AIR_PURIFIER_MODE.AUTO },
+  { id: "sleep", label: "수면", hint: AIR_PURIFIER_MODE_LABELS[AIR_PURIFIER_MODE.SLEEP], mode: AIR_PURIFIER_MODE.SLEEP },
+  { id: "turbo", label: "고속", hint: AIR_PURIFIER_MODE_LABELS[AIR_PURIFIER_MODE.TURBO], mode: AIR_PURIFIER_MODE.TURBO },
 ];
 
 const LIVING_ROOM_KEYS = ["default", "room_1", "room1", "ward_home_1", "ward-home-1"];
@@ -221,6 +221,9 @@ function MorePage({
   onSelectScreensaverCharacter,
   airPurifierOn,
   airPurifierMode,
+  airPurifierSending = false,
+  onToggleAirPurifier,
+  onSelectAirPurifierMode,
   onSetAirPurifierStatus,
   fragranceOn = false,
   fragranceChannels = {},
@@ -231,6 +234,8 @@ function MorePage({
   foundingDemo = null,
 }) {
   const [arduinoBusy, setArduinoBusy] = useState(false);
+  /** 켜면 버튼이 기기를 움직이지 않고 화면 표시만 실제 상태에 맞춘다 (본체 버튼으로 어긋났을 때). */
+  const [airSyncOnly, setAirSyncOnly] = useState(false);
   const [speakerVolume, setSpeakerVolumeState] = useState(80);
   const [speakerTestBusy, setSpeakerTestBusy] = useState(false);
   const volumeTimerRef = useRef(null);
@@ -634,10 +639,41 @@ function MorePage({
         {activeTab === "control" ? (
           <section className="more-air-status-card more-tab-card more-control-card">
             <div className="more-control-block">
-              <p className="more-section-label">공청기</p>
-              <div className="more-air-status-grid" role="group" aria-label="공청기 현재 상태">
+              <div className="more-air-control-head">
+                <p className="more-section-label">
+                  공청기{airPurifierOn ? "" : " · 꺼짐"}
+                </p>
+                <button
+                  type="button"
+                  className={`more-air-sync-toggle${airSyncOnly ? " active" : ""}`}
+                  aria-pressed={airSyncOnly}
+                  onClick={() => setAirSyncOnly((value) => !value)}
+                >
+                  {airSyncOnly ? "표시만 맞추는 중" : "표시만 맞추기"}
+                </button>
+              </div>
+              <div className="more-air-status-grid more-air-control-grid" role="group" aria-label="공청기 제어">
+                <button
+                  type="button"
+                  className={`more-air-status-btn mode-off${airPurifierOn ? "" : " selected"}`}
+                  aria-pressed={!airPurifierOn}
+                  disabled={!airSyncOnly && airPurifierSending}
+                  onClick={() => {
+                    if (airSyncOnly) {
+                      onSetAirPurifierStatus?.(false, airPurifierMode);
+                    } else if (airPurifierOn) {
+                      onToggleAirPurifier?.();
+                    }
+                  }}
+                >
+                  <span className="more-air-status-btn-icon" aria-hidden="true">
+                    <Power size={20} strokeWidth={2.2} />
+                  </span>
+                  <strong>끄기</strong>
+                  <span>{airPurifierSending ? "전송 중..." : "전원 OFF"}</span>
+                </button>
                 {AIR_STATUS_OPTIONS.map((option) => {
-                  const selected = airPurifierMode === option.mode;
+                  const selected = airPurifierOn && airPurifierMode === option.mode;
 
                   return (
                     <button
@@ -645,9 +681,13 @@ function MorePage({
                       type="button"
                       className={`more-air-status-btn mode-${option.id}${selected ? " selected" : ""}`}
                       aria-pressed={selected}
+                      disabled={!airSyncOnly && airPurifierSending}
                       onClick={() => {
-                        if (selected) return;
-                        onSetAirPurifierStatus?.(airPurifierOn, option.mode);
+                        if (airSyncOnly) {
+                          onSetAirPurifierStatus?.(true, option.mode);
+                        } else if (!selected) {
+                          onSelectAirPurifierMode?.(option.mode);
+                        }
                       }}
                     >
                       <span className="more-air-status-btn-icon" aria-hidden="true">
