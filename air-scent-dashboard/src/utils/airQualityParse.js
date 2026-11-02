@@ -1,6 +1,6 @@
+import { sensorLabelTone } from "./sensorLabels";
+
 const PAYLOAD_RE = /^(.+?)\s*\(\s*(\d+(?:\.\d+)?)\s*%\s*\)\s*$/;
-const WOODY_RE = /woody|우드/i;
-const FRESH_RE = /fresh\s*air|fresh|clean|무취|청정/i;
 
 export function parseAirQualityPayload(payload) {
   if (!payload || typeof payload !== "string") {
@@ -8,7 +8,7 @@ export function parseAirQualityPayload(payload) {
       raw: null,
       label: null,
       confidence: null,
-      isWoody: false,
+      isOrange: false,
       tone: "unknown",
     };
   }
@@ -25,17 +25,13 @@ export function parseAirQualityPayload(payload) {
     confidence = Number.isNaN(parsed) ? null : parsed;
   }
 
-  let tone = "other";
-  if (FRESH_RE.test(label)) tone = "fresh";
-  else if (WOODY_RE.test(label)) tone = "woody";
-  else if (/lavender|라벤더/i.test(label)) tone = "lavender";
-  else if (/musk|머스크/i.test(label)) tone = "musk";
+  const tone = sensorLabelTone(label) ?? "other";
 
   return {
     raw: text,
     label,
     confidence,
-    isWoody: tone === "woody",
+    isOrange: tone === "orange",
     tone,
   };
 }

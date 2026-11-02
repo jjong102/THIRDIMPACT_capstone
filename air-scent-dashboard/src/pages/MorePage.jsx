@@ -13,12 +13,14 @@ import {
 } from "../data/screensaverCharacters";
 import { fetchSystemHosts, requestSystemPower } from "../services/systemPower";
 import { fetchSttHealth } from "../services/sttTranscribe";
-import { fetchSpeakerVolume, setSpeakerVolume, speakText } from "../services/ttsSpeak";
+import { fetchSpeakerVolume, fetchVoiceClips, playVoiceClip, setSpeakerVolume, speakText } from "../services/ttsSpeak";
 import { setLivingScentDemo } from "../services/mqttAirQuality";
-import { AIR_PURIFIER_MODE_LABELS } from "../utils/airPurifierCommand";
+import { AIR_PURIFIER_MODE, AIR_PURIFIER_MODE_LABELS } from "../utils/airPurifierCommand";
 import { clampTargetPercent } from "../utils/fragranceIntensity";
 import { displayWardScentLabel } from "../utils/scentVisual";
+import { sensorLabelTone } from "../utils/sensorLabels";
 import {
+  clearWardScent,
   getWardScent,
   loadWardScents,
   loadWards,
@@ -26,6 +28,8 @@ import {
 } from "../utils/wardStorage";
 
 import "./MorePage.css";
+import { scentLabel } from "../data/scentRecipes";
+import { loadDeveloperMode, saveDeveloperMode } from "../utils/developerMode";
 
 function CharacterPreview({ characterId }) {
   switch (characterId) {
@@ -76,9 +80,9 @@ function AirStatusIcon({ id }) {
 }
 
 const AIR_STATUS_OPTIONS = [
-  { id: "auto", label: "자동", hint: AIR_PURIFIER_MODE_LABELS[1], mode: 1 },
-  { id: "sleep", label: "수면", hint: AIR_PURIFIER_MODE_LABELS[2], mode: 2 },
-  { id: "turbo", label: "고속", hint: AIR_PURIFIER_MODE_LABELS[3], mode: 3 },
+  { id: "auto", label: "자동", hint: AIR_PURIFIER_MODE_LABELS[AIR_PURIFIER_MODE.AUTO], mode: AIR_PURIFIER_MODE.AUTO },
+  { id: "sleep", label: "수면", hint: AIR_PURIFIER_MODE_LABELS[AIR_PURIFIER_MODE.SLEEP], mode: AIR_PURIFIER_MODE.SLEEP },
+  { id: "turbo", label: "고속", hint: AIR_PURIFIER_MODE_LABELS[AIR_PURIFIER_MODE.TURBO], mode: AIR_PURIFIER_MODE.TURBO },
 ];
 
 const LIVING_ROOM_KEYS = ["default", "room_1", "room1", "ward_home_1", "ward-home-1"];
@@ -141,10 +145,10 @@ function livingSensorStatus(mqttAirQuality) {
 }
 
 const LIVING_DEMO_SCENTS = [
-  { id: "fresh", label: "Fresh Air", hint: "공기", mqttLabel: "Fresh Air" },
-  { id: "odor", label: "odor", hint: "악취", mqttLabel: "Floral" },
-  { id: "citrus", label: "Citrus", hint: "시트러스", mqttLabel: "woody" },
-  { id: "woody", label: "Woody", hint: "우디", mqttLabel: "musk" },
+  { id: "fresh", label: "Fresh Air", hint: "공기" },
+  { id: "odor", label: "odor", hint: "악취" },
+  { id: "orange", label: "Orange", hint: "오렌지" },
+  { id: "mint", label: "Peppermint", hint: "페퍼민트" },
 ];
 
 function describeSttStatus(payload) {
@@ -170,6 +174,26 @@ function describeSttStatus(payload) {
   };
 }
 
+function bedroomWard() {
+  const wards = loadWards();
+  return (
+    wards.find((ward) => wardDisplayName(ward) === "안방") ||
+    wards.find((ward) => {
+      const id = String(ward?.id ?? "")
+        .toLowerCase()
+        .replace(/-/g, "_");
+      return id === "room_1" || id === "room1" || id === "ward_home_1";
+    }) ||
+    wards[0] ||
+    null
+  );
+}
+
+function isBedroomScentUnset() {
+  const ward = bedroomWard();
+  return Boolean(ward && loadWardScents()?.[ward.id]?.unset);
+}
+
 function livingTargetPercent() {
   const wards = loadWards();
   const living =
@@ -185,9 +209,9 @@ function livingTargetPercent() {
 }
 
 const FRAGRANCE_CHANNELS = [
-  { id: "musk", label: "Woody", hint: "우디" },
-  { id: "lavender", label: "Floral", hint: "플로럴" },
-  { id: "woody", label: "Citrus", hint: "시트러스" },
+  { id: "mint", label: "Peppermint", hint: "페퍼민트" },
+  { id: "lavender", label: "Lavender", hint: "라벤더" },
+  { id: "orange", label: "Orange", hint: "오렌지" },
 ];
 
 const MORE_TAB_KEY = "air-scent:more-tab";
@@ -196,6 +220,7 @@ const MORE_TABS = [
   { id: "control", label: "제어", Icon: Wind },
   { id: "demo", label: "시연", Icon: Sparkles },
   { id: "screen", label: "화면", Icon: Eye },
+  { id: "voice", label: "음성", Icon: Volume2 },
 ];
 const MORE_TAB_ALIASES = {
   power: "device",
@@ -220,6 +245,9 @@ function MorePage({
   onSelectScreensaverCharacter,
   airPurifierOn,
   airPurifierMode,
+  airPurifierSending = false,
+  onToggleAirPurifier,
+  onSelectAirPurifierMode,
   onSetAirPurifierStatus,
   fragranceOn = false,
   fragranceChannels = {},
@@ -230,10 +258,13 @@ function MorePage({
   foundingDemo = null,
 }) {
   const [arduinoBusy, setArduinoBusy] = useState(false);
+  /** 켜면 버튼이 기기를 움직이지 않고 화면 표시만 실제 상태에 맞춘다 (본체 버튼으로 어긋났을 때). */
+  const [airSyncOnly, setAirSyncOnly] = useState(false);
   const [speakerVolume, setSpeakerVolumeState] = useState(80);
   const [speakerTestBusy, setSpeakerTestBusy] = useState(false);
   const volumeTimerRef = useRef(null);
   const [activeTab, setActiveTab] = useState(loadMoreTab);
+  const [developerMode, setDeveloperMode] = useState(loadDeveloperMode);
   const [pendingAction, setPendingAction] = useState(null);
   const [powerBusy, setPowerBusy] = useState(false);
   const [powerError, setPowerError] = useState("");
@@ -246,6 +277,18 @@ function MorePage({
   });
   const [sttBusy, setSttBusy] = useState(false);
   const [demoBusy, setDemoBusy] = useState(false);
+  const [bedroomUnset, setBedroomUnset] = useState(isBedroomScentUnset);
+
+  useEffect(() => {
+    const sync = () => setBedroomUnset(isBedroomScentUnset());
+    window.addEventListener("air-scent-ward-scents-changed", sync);
+    return () => window.removeEventListener("air-scent-ward-scents-changed", sync);
+  }, []);
+  const [voiceBusyId, setVoiceBusyId] = useState(null);
+  const [voiceClips, setVoiceClips] = useState([]);
+  const [voiceLoading, setVoiceLoading] = useState(false);
+  const [voiceLoaded, setVoiceLoaded] = useState(false);
+  const [voiceMessage, setVoiceMessage] = useState("");
   const logBodyRef = useRef(null);
   const selectedCharacter = getScreensaverCharacter(screensaverCharacterId);
   const mqttLogs = useMemo(
@@ -339,21 +382,19 @@ function MorePage({
 
   const livingDemoId = useMemo(() => {
     const label = displayWardScentLabel(mqttAirQuality?.label) ?? mqttAirQuality?.label ?? "";
-    const lower = String(label).toLowerCase();
-    if (/odor|floral|lavender|플로럴/.test(lower)) return "odor";
-    if (/fresh|air|공기/.test(lower)) return "fresh";
-    if (/citrus|시트러스/.test(lower)) return "citrus";
-    if (/woody|우디|musk|머스크/.test(lower)) return "woody";
-    return null;
+    const tone = sensorLabelTone(label);
+    if (tone === "lavender") return "odor";
+    return tone;
   }, [mqttAirQuality]);
 
-  const applyLivingDemo = async (mqttLabel) => {
+  /** demoId: fresh · odor · orange · mint — 센서 원래 라벨로는 서버가 바꾼다. */
+  const applyLivingDemo = async (demoId) => {
     if (demoBusy) return;
     setDemoBusy(true);
     try {
       await setLivingScentDemo(
-        mqttLabel,
-        mqttLabel ? livingTargetPercent() : null
+        demoId,
+        demoId ? livingTargetPercent() : null
       );
     } catch {
       // 다음 폴링에서 실제 값이 보임
@@ -421,6 +462,40 @@ function MorePage({
     }
   };
 
+  const loadVoiceClips = async () => {
+    if (voiceLoading) return;
+    setVoiceLoading(true);
+    setVoiceMessage("");
+    try {
+      const clips = await fetchVoiceClips();
+      setVoiceClips(clips);
+      setVoiceLoaded(true);
+      if (clips.length === 0) {
+        setVoiceMessage("폴더에 녹음 파일이 없습니다.");
+      }
+    } catch (error) {
+      setVoiceClips([]);
+      setVoiceLoaded(true);
+      setVoiceMessage(error instanceof Error ? error.message : "녹음 목록을 읽지 못했습니다");
+    } finally {
+      setVoiceLoading(false);
+    }
+  };
+
+  const playVoice = async (clip) => {
+    if (voiceBusyId) return;
+    setVoiceBusyId(clip.file);
+    setVoiceMessage("");
+    try {
+      const result = await playVoiceClip(clip.file);
+      if (!result?.ok) {
+        setVoiceMessage(result?.error || "재생하지 못했습니다");
+      }
+    } finally {
+      setVoiceBusyId(null);
+    }
+  };
+
   const confirmPowerAction = async () => {
     if (!pendingAction || powerBusy) return;
 
@@ -461,6 +536,19 @@ function MorePage({
       <div className="more-tab-panel">
         {activeTab === "device" ? (
           <section className="more-air-status-card more-tab-card more-device-card">
+            <button
+              type="button"
+              className={`more-dev-mode${developerMode ? " active" : ""}`}
+              aria-pressed={developerMode}
+              onClick={() => {
+                const next = !developerMode;
+                setDeveloperMode(next);
+                saveDeveloperMode(next);
+              }}
+            >
+              <span>개발자 모드</span>
+              <strong>{developerMode ? "켜짐" : "꺼짐"}</strong>
+            </button>
             <article className={`more-arduino-card ${arduinoConnected ? "is-on" : "is-off"}`}>
               <div className="more-arduino-copy">
                 <div className="more-arduino-icon" aria-hidden="true">
@@ -594,10 +682,41 @@ function MorePage({
         {activeTab === "control" ? (
           <section className="more-air-status-card more-tab-card more-control-card">
             <div className="more-control-block">
-              <p className="more-section-label">공청기</p>
-              <div className="more-air-status-grid" role="group" aria-label="공청기 현재 상태">
+              <div className="more-air-control-head">
+                <p className="more-section-label">
+                  공청기{airPurifierOn ? "" : " · 꺼짐"}
+                </p>
+                <button
+                  type="button"
+                  className={`more-air-sync-toggle${airSyncOnly ? " active" : ""}`}
+                  aria-pressed={airSyncOnly}
+                  onClick={() => setAirSyncOnly((value) => !value)}
+                >
+                  {airSyncOnly ? "표시만 맞추는 중" : "표시만 맞추기"}
+                </button>
+              </div>
+              <div className="more-air-status-grid more-air-control-grid" role="group" aria-label="공청기 제어">
+                <button
+                  type="button"
+                  className={`more-air-status-btn mode-off${airPurifierOn ? "" : " selected"}`}
+                  aria-pressed={!airPurifierOn}
+                  disabled={!airSyncOnly && airPurifierSending}
+                  onClick={() => {
+                    if (airSyncOnly) {
+                      onSetAirPurifierStatus?.(false, airPurifierMode);
+                    } else if (airPurifierOn) {
+                      onToggleAirPurifier?.();
+                    }
+                  }}
+                >
+                  <span className="more-air-status-btn-icon" aria-hidden="true">
+                    <Power size={20} strokeWidth={2.2} />
+                  </span>
+                  <strong>끄기</strong>
+                  <span>{airPurifierSending ? "전송 중..." : "전원 OFF"}</span>
+                </button>
                 {AIR_STATUS_OPTIONS.map((option) => {
-                  const selected = airPurifierMode === option.mode;
+                  const selected = airPurifierOn && airPurifierMode === option.mode;
 
                   return (
                     <button
@@ -605,9 +724,13 @@ function MorePage({
                       type="button"
                       className={`more-air-status-btn mode-${option.id}${selected ? " selected" : ""}`}
                       aria-pressed={selected}
+                      disabled={!airSyncOnly && airPurifierSending}
                       onClick={() => {
-                        if (selected) return;
-                        onSetAirPurifierStatus?.(airPurifierOn, option.mode);
+                        if (airSyncOnly) {
+                          onSetAirPurifierStatus?.(true, option.mode);
+                        } else if (!selected) {
+                          onSelectAirPurifierMode?.(option.mode);
+                        }
                       }}
                     >
                       <span className="more-air-status-btn-icon" aria-hidden="true">
@@ -718,7 +841,7 @@ function MorePage({
               </span>
               <strong>
                 {livingStatus.label
-                  ? `${livingStatus.label}${
+                  ? `${scentLabel(livingStatus.label)}${
                       livingStatus.confidence != null
                         ? ` ${Math.round(livingStatus.confidence)}%`
                         : ""
@@ -768,7 +891,7 @@ function MorePage({
                     className={`more-air-status-btn more-demo-btn scent-${option.id}${selected ? " selected" : ""}`}
                     aria-pressed={selected}
                     disabled={demoBusy}
-                    onClick={() => applyLivingDemo(option.mqttLabel)}
+                    onClick={() => applyLivingDemo(option.id)}
                   >
                     <strong>{option.label}</strong>
                     <span>{option.hint}</span>
@@ -783,6 +906,19 @@ function MorePage({
               onClick={() => applyLivingDemo(null)}
             >
               {demoBusy ? "처리 중…" : "시연 취소"}
+            </button>
+            <button
+              type="button"
+              className={`more-demo-clear${bedroomUnset ? " is-active" : ""}`}
+              disabled={bedroomUnset}
+              onClick={() => {
+                const ward = bedroomWard();
+                if (!ward?.id) return;
+                clearWardScent(ward.id);
+                setBedroomUnset(true);
+              }}
+            >
+              {bedroomUnset ? "안방 향기 미설정됨" : "안방 향기 미설정"}
             </button>
             {foundingDemo ? (
               <button
@@ -805,6 +941,58 @@ function MorePage({
                 </span>
               </button>
             ) : null}
+          </section>
+        ) : null}
+
+        {activeTab === "voice" ? (
+          <section className="more-air-status-card more-tab-card more-voice-card">
+            <header className="more-air-status-header">
+              <div className="more-demo-icon" aria-hidden="true">
+                <Volume2 size={20} strokeWidth={2.4} />
+              </div>
+              <div className="more-air-status-copy">
+                <p className="more-air-status-label">음성</p>
+                <h1>녹음 재생</h1>
+                <p className="more-air-status-desc">
+                  public/voice-clips 에 넣은 녹음이 스피커로 나갑니다.
+                </p>
+              </div>
+            </header>
+            <button
+              type="button"
+              className="more-voice-load"
+              onClick={() => void loadVoiceClips()}
+              disabled={voiceLoading}
+            >
+              <RefreshCw size={18} strokeWidth={2.6} />
+              <span>{voiceLoading ? "불러오는 중" : "로드하기"}</span>
+            </button>
+            {voiceLoaded ? (
+              <div className="more-voice-list" role="group" aria-label="녹음 음성">
+                {voiceClips.map((clip) => {
+                  const busy = voiceBusyId === clip.file;
+                  return (
+                    <button
+                      key={clip.file}
+                      type="button"
+                      className={`more-voice-btn${busy ? " is-busy" : ""}`}
+                      disabled={voiceBusyId !== null}
+                      onClick={() => void playVoice(clip)}
+                    >
+                      <Play size={18} strokeWidth={2.6} />
+                      <strong>{clip.label.replaceAll("_", " ")}</strong>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+            {voiceMessage ? (
+              <p className="more-voice-message is-error">{voiceMessage}</p>
+            ) : voiceLoaded ? null : (
+              <p className="more-voice-message">
+                녹음 파일을 폴더에 넣고 로드하기를 누르세요.
+              </p>
+            )}
           </section>
         ) : null}
 

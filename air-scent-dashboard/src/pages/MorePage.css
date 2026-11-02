@@ -8,10 +8,53 @@
   overflow: hidden;
 }
 
+.more-dev-mode {
+  flex-shrink: 0;
+  width: 100%;
+  min-height: 56px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 16px;
+  background: var(--card);
+  color: var(--text-main);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.more-dev-mode span {
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.more-dev-mode strong {
+  min-width: 64px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 900;
+  text-align: center;
+  color: var(--text-sub);
+  background: #f1f5f9;
+}
+
+.more-dev-mode.active {
+  border-color: #60a5fa;
+  background: #eff6ff;
+}
+
+.more-dev-mode.active strong {
+  color: #ffffff;
+  background: linear-gradient(135deg, var(--blue), var(--purple));
+}
+
 .more-tabs {
   flex-shrink: 0;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -352,6 +395,75 @@
   gap: 10px;
 }
 
+.more-voice-load {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 64px;
+  padding: 0 18px;
+  border: none;
+  border-radius: 16px;
+  background: #1d4ed8;
+  color: #ffffff;
+  font-size: 18px;
+  font-weight: 900;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.more-voice-load:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.more-voice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.more-voice-btn {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  min-height: 84px;
+  padding: 16px 18px;
+  border: 1.5px solid #ddd6fe;
+  border-radius: 16px;
+  background: #f5f3ff;
+  color: #6d28d9;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.more-voice-btn strong {
+  font-size: 22px;
+  font-weight: 950;
+  color: #4c1d95;
+}
+
+.more-voice-btn.is-busy,
+.more-voice-btn:disabled {
+  opacity: 0.6;
+}
+
+.more-voice-btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.more-voice-message {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-sub);
+}
+
+.more-voice-message.is-error {
+  color: #b91c1c;
+}
+
 .more-section-label {
   flex-shrink: 0;
   margin: 0;
@@ -367,6 +479,37 @@
 .more-control-card .more-air-status-btn {
   min-height: 72px;
   padding: 10px 8px;
+}
+
+.more-air-control-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.more-air-sync-toggle {
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #ffffff;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-sub);
+}
+
+.more-air-sync-toggle.active {
+  border-color: #f59e0b;
+  background: #fffbeb;
+  color: #b45309;
+}
+
+.more-control-block .more-air-control-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.more-air-status-btn:disabled {
+  opacity: 0.6;
 }
 
 .more-host-grid {
@@ -969,21 +1112,21 @@
   color: #5c4d14;
 }
 
-.more-demo-btn.scent-citrus.selected {
+.more-demo-btn.scent-orange.selected {
   border-color: #fcd34d;
   background: #fffbeb;
 }
 
-.more-demo-btn.scent-citrus.selected strong {
+.more-demo-btn.scent-orange.selected strong {
   color: #b45309;
 }
 
-.more-demo-btn.scent-woody.selected {
+.more-demo-btn.scent-mint.selected {
   border-color: #c4b5fd;
   background: #f5f3ff;
 }
 
-.more-demo-btn.scent-woody.selected strong {
+.more-demo-btn.scent-mint.selected strong {
   color: #6d28d9;
 }
 
@@ -1006,7 +1149,7 @@
   background: #cbd5e1;
 }
 
-.more-fragrance-btn.channel-musk .more-fragrance-dot {
+.more-fragrance-btn.channel-mint .more-fragrance-dot {
   background: #8b5cf6;
 }
 
@@ -1014,7 +1157,7 @@
   background: #3b82f6;
 }
 
-.more-fragrance-btn.channel-woody .more-fragrance-dot {
+.more-fragrance-btn.channel-orange .more-fragrance-dot {
   background: #d97706;
 }
 
@@ -1024,7 +1167,7 @@
   box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.14);
 }
 
-.more-fragrance-btn.channel-musk.selected {
+.more-fragrance-btn.channel-mint.selected {
   border-color: #c4b5fd;
   background: #f5f3ff;
 }
@@ -1034,7 +1177,7 @@
   background: #eff6ff;
 }
 
-.more-fragrance-btn.channel-woody.selected {
+.more-fragrance-btn.channel-orange.selected {
   border-color: #fcd34d;
   background: #fffbeb;
 }
@@ -1047,7 +1190,7 @@
   color: #1d4ed8;
 }
 
-.more-fragrance-btn.channel-woody.selected strong {
+.more-fragrance-btn.channel-orange.selected strong {
   color: #b45309;
 }
 

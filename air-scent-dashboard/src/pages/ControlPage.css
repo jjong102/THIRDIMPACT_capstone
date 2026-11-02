@@ -711,14 +711,14 @@
   position: relative;
 }
 
-.control-mode-btn.center.mode-2 .control-mode-btn-icon {
+.control-mode-btn.center.mode-sleep .control-mode-btn-icon {
   border-color: #c7d2fe;
   background:
     radial-gradient(circle at 40% 35%, #ffffff, #eef2ff);
   box-shadow: 0 10px 24px rgba(99, 102, 241, 0.18);
 }
 
-.control-mode-btn.center.mode-3 .control-mode-btn-icon {
+.control-mode-btn.center.mode-turbo .control-mode-btn-icon {
   border-color: #fecdd3;
   background:
     radial-gradient(circle at 40% 35%, #ffffff, #fff1f2);
@@ -785,15 +785,15 @@
   color: #64748b;
 }
 
-.control-mode-btn.mode-1 .control-mode-btn-icon {
+.control-mode-btn.mode-auto .control-mode-btn-icon {
   color: var(--blue);
 }
 
-.control-mode-btn.mode-2 .control-mode-btn-icon {
+.control-mode-btn.mode-sleep .control-mode-btn-icon {
   color: #6366f1;
 }
 
-.control-mode-btn.mode-3 .control-mode-btn-icon {
+.control-mode-btn.mode-turbo .control-mode-btn-icon {
   color: #e11d48;
 }
 

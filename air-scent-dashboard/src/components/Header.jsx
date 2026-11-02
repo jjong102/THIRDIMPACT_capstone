@@ -1,8 +1,11 @@
-import { useCallback, useRef, useState } from "react";
-import { ArrowLeft, Bot, Eye, EyeOff, MapPin, Mic, MicOff, RefreshCw, Wifi, Wind, SprayCan } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowLeft, Bot, Eye, EyeOff, MapPin, Mic, MicOff, RefreshCw, Settings, Wifi, WifiHigh, WifiLow, WifiOff, WifiZero, Wind, SprayCan } from "lucide-react";
 
 import { useCurrentTime } from "../hooks/useCurrentTime";
+import useGdmRobotPose from "../hooks/useGdmRobotPose";
 import { useSttHealth } from "../hooks/useSttHealth";
+import { useWifiStatus } from "../hooks/useWifiStatus";
+import { fetchMoveUi } from "../services/moveUi";
 import "./Header.css";
 
 const SCREENSAVER_LONG_PRESS_MS = 650;
@@ -17,13 +20,17 @@ function Header({
   fragranceOn = false,
   fragranceDiffusing = false,
   arduinoConnected = false,
+  onOpenSettings,
+  settingsOpen = false,
 }) {
+  const isAiConsult = variant === "ai-consult";
   const { timeLabel } = useCurrentTime();
   const sttStatus = useSttHealth();
-  const isAiConsult = variant === "ai-consult";
+  const wifi = useWifiStatus();
+  const { pose } = useGdmRobotPose(!isAiConsult);
+  const [moveUi, setMoveUi] = useState(null);
   const whisperTitle = `위스퍼 ${sttStatus.label} · ${sttStatus.detail}`;
-  const deviceRunning =
-    airPurifierOn || fragranceOn || fragranceDiffusing;
+  const deviceRunning = airPurifierOn || fragranceOn || fragranceDiffusing;
   const [screensaverHolding, setScreensaverHolding] = useState(false);
   const longPressTimerRef = useRef(null);
   const suppressClickRef = useRef(false);
@@ -54,6 +61,27 @@ function Header({
     setScreensaverHolding(false);
   }, [clearScreensaverLongPress]);
 
+  useEffect(() => {
+    if (isAiConsult) return undefined;
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const state = await fetchMoveUi();
+        if (!cancelled) setMoveUi(state);
+      } catch {
+        if (!cancelled) setMoveUi(null);
+      }
+    };
+
+    load();
+    const timer = window.setInterval(load, 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [isAiConsult]);
+
   const handleScreensaverClick = useCallback(() => {
     if (suppressClickRef.current) {
       suppressClickRef.current = false;
@@ -78,6 +106,24 @@ function Header({
     deviceTone = "scent";
   }
 
+  const wifiLevel = wifi.connected ? wifi.level : -1;
+  const WifiIcon =
+    wifiLevel >= 3
+      ? Wifi
+      : wifiLevel === 2
+        ? WifiHigh
+        : wifiLevel === 1
+          ? WifiLow
+          : wifiLevel === 0
+            ? WifiZero
+            : WifiOff;
+  const wifiLabel = wifi.connected
+    ? `${wifi.ssid || "Wi-Fi"} · ${wifi.dbm == null ? "연결됨" : `${wifi.dbm} dBm`}`
+    : "Wi-Fi 끊김";
+  let robotLabel = "대기";
+  if (moveUi?.poseEstimating) robotLabel = "위치 추정";
+  else if (moveUi?.isNavigating) robotLabel = "이동 중";
+  const locationLabel = pose?.live ? robotLabel : "위치 없음";
   const screensaverLabel = screensaverIdleDisabled
     ? "화면보호기 꺼짐, 길게 눌러 자동 전환 켜기"
     : "화면보호기, 길게 눌러 자동 전환 끄기";
@@ -93,19 +139,15 @@ function Header({
           </div>
 
           <div className="header-text">
-            <p>현재 위치</p>
-            <h2>인천대학교</h2>
+            {locationLabel === "위치 없음" ? <p>{robotLabel}</p> : null}
+            <h2>{locationLabel}</h2>
           </div>
         </div>
 
         <div className="header-right">
           <div
             className={`header-device-chip ${deviceTone}`}
-            title={
-              arduinoConnected
-                ? "기기 연결됨"
-                : "기기 연결 대기"
-            }
+            title={arduinoConnected ? "기기 연결됨" : "기기 연결 대기"}
           >
             {airPurifierOn ? <Wind size={13} strokeWidth={2.6} /> : null}
             {(fragranceOn || fragranceDiffusing) && !airPurifierOn ? (
@@ -158,8 +200,26 @@ function Header({
               <Mic size={20} strokeWidth={2.4} />
             )}
           </span>
-          <Wifi className="header-wifi" size={20} strokeWidth={2.4} />
+          <span
+            className={`header-wifi is-${wifi.connected ? `l${wifi.level}` : "off"}`}
+            title={wifiLabel}
+            aria-label={wifiLabel}
+          >
+            <WifiIcon size={20} strokeWidth={2.4} />
+          </span>
           <span>{timeLabel}</span>
+          {onOpenSettings ? (
+            <button
+              type="button"
+              className={`header-settings-btn${settingsOpen ? " is-active" : ""}`}
+              onClick={onOpenSettings}
+              aria-label={settingsOpen ? "홈으로" : "설정"}
+              aria-pressed={settingsOpen}
+              title={settingsOpen ? "홈으로" : "설정"}
+            >
+              <Settings size={18} strokeWidth={2.4} />
+            </button>
+          ) : null}
         </div>
       </div>
 

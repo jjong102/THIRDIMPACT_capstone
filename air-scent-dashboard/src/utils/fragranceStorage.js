@@ -71,7 +71,7 @@ export function loadInitialFragranceState() {
     fragranceBlend: blend,
     fragranceChannels: session.fragranceOn
       ? channelsForFragrance(fragrance)
-      : { musk: false, lavender: false, woody: false },
+      : { mint: false, lavender: false, orange: false },
     fragranceOn: Boolean(session.fragranceOn),
     fragranceDiffusing: Boolean(session.fragranceDiffusing),
     fragranceDispenseComplete: Boolean(session.fragranceDispenseComplete),

@@ -1,13 +1,14 @@
 #define FAN_PIN 2
 
-#define MIST1 3
-#define MIST2 4
-#define MIST3 5
+// 미스트 채널 순서 = 명령 Mxyz 의 자리 순서 (x=페퍼민트, y=라벤더, z=오렌지)
+#define MIST_MINT_PIN 3
+#define MIST_LAVENDER_PIN 4
+#define MIST_ORANGE_PIN 5
 
 const bool RELAY_ON = LOW;
 const bool RELAY_OFF = HIGH;
 
-int mistPins[3] = {MIST1, MIST2, MIST3};
+int mistPins[3] = {MIST_MINT_PIN, MIST_LAVENDER_PIN, MIST_ORANGE_PIN};
 
 unsigned long runTime[3] = {0, 0, 0};
 unsigned long maxTime = 0;

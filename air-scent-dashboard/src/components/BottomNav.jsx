@@ -1,4 +1,4 @@
-import { Home, SlidersHorizontal, Navigation, LayoutGrid } from "lucide-react";
+import { Home, LayoutGrid } from "lucide-react";
 
 import "./BottomNav.css";
 
@@ -7,16 +7,6 @@ const navItems = [
     id: "home",
     label: "홈",
     icon: Home,
-  },
-  {
-    id: "control",
-    label: "제어",
-    icon: SlidersHorizontal,
-  },
-  {
-    id: "move",
-    label: "이동",
-    icon: Navigation,
   },
   {
     id: "more",

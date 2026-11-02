@@ -49,7 +49,7 @@ export async function stopSharedFragranceSpray() {
     await sendFragranceCommands(["M000"], {
       fragranceOn: false,
       fragranceDiffusing: false,
-      fragranceChannels: { musk: false, lavender: false, woody: false },
+      fragranceChannels: { mint: false, lavender: false, orange: false },
     });
   } catch {
     // UI already cleared; Arduino hook retries on the robot

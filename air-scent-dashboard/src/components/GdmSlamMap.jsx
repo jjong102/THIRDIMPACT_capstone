@@ -115,7 +115,7 @@ function GdmSlamMap({
       ? {
           label: mqttAirQuality.label,
           confidence: mqttAirQuality.confidence,
-          isWoody: mqttAirQuality.isWoody,
+          isOrange: mqttAirQuality.isOrange,
           tone: mqttAirQuality.tone,
         }
       : null;
@@ -129,7 +129,7 @@ function GdmSlamMap({
         ? {
             label: mqttAirQuality.label,
             confidence: mqttAirQuality.confidence,
-            isWoody: mqttAirQuality.isWoody,
+            isOrange: mqttAirQuality.isOrange,
             tone: mqttAirQuality.tone,
             raw: mqttAirQuality.label,
           }
@@ -381,6 +381,22 @@ function GdmSlamMap({
               >
                 <span className="slam-ward-aura-ring" />
                 <span className="slam-ward-aura-ring delay" />
+              </div>
+            )}
+            {hasScent && (
+              <div className="slam-scent-burst" aria-hidden="true">
+                {[0, 60, 120, 180, 240, 300].map((angle, index) => (
+                  <span
+                    key={angle}
+                    className="slam-scent-burst-emoji"
+                    style={{
+                      "--burst-angle": `${angle}deg`,
+                      "--burst-delay": `${index * 0.42}s`,
+                    }}
+                  >
+                    {visual.emoji}
+                  </span>
+                ))}
               </div>
             )}
 

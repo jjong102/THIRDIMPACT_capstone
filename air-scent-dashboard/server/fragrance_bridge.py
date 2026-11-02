@@ -41,6 +41,9 @@ _SERIAL_USB_IDS = {
 }
 
 ser = None
+# USB 가 끊겼다 다시 붙으면 /dev/ttyACM0 경로는 같아도 장치 노드(inode)가 새로 생긴다.
+# 예전 핸들로 계속 쓰면 응답이 \x00 덩어리로 깨지고 명령이 전달되지 않는다.
+ser_inode = None
 serial_error = None
 serial_lock = threading.Lock()
 state_lock = threading.Lock()
@@ -78,14 +81,27 @@ def list_serial_candidates() -> list[str]:
     return out
 
 
+def _device_inode(path: str):
+    try:
+        return os.stat(path).st_ino
+    except OSError:
+        return None
+
+
 def _serial_handle_valid(port) -> bool:
     if port is None:
         return False
     try:
         device = str(getattr(port, "port", "") or "")
-        return bool(port.is_open and device and Path(device).exists())
+        if not (port.is_open and device and Path(device).exists()):
+            return False
+        return port is not ser or ser_inode is None or _device_inode(device) == ser_inode
     except Exception:
         return False
+
+
+def _looks_garbled(replies: list[str]) -> bool:
+    return any("\x00" in line or "\ufffd" in line for line in replies)
 
 
 def default_state() -> dict:
@@ -95,15 +111,15 @@ def default_state() -> dict:
         "airPurifierMode": 1,
         "fragranceOn": False,
         "fragranceChannels": {
-            "musk": False,
+            "mint": False,
             "lavender": False,
-            "woody": False,
+            "orange": False,
         },
         "fragranceLevel": 2,
         "fragranceBlend": {
-            "musk": 40,
+            "mint": 40,
             "lavender": 35,
-            "woody": 25,
+            "orange": 25,
         },
         "fragranceDiffusing": False,
         "updatedAt": None,
@@ -201,13 +217,28 @@ def _drain(port) -> None:
         pass
 
 
-def _wait_until_ready(port) -> None:
+def _wait_until_ready(port) -> bool:
     deadline = time.monotonic() + READY_WAIT_S
+    rebooted = False
     while time.monotonic() < deadline:
         line = port.readline()
         if line and b"READY" in line:
+            rebooted = True
             break
     _drain(port)
+    return rebooted
+
+
+def _restore_fan_state(port) -> None:
+    """아두이노가 재부팅되면 펌웨어의 팬 ON/모드 카운터가 초기화된다(공청기 본체는 그대로).
+    마지막으로 알던 상태를 SYNC 로 다시 알려 줘서 화면 모드가 밀리지 않게 한다."""
+    current = snapshot_state()
+    mode = int(current.get("airPurifierMode") or 1)
+    command = f"SYNC{mode}" if current.get("airPurifierOn") else "SYNC0"
+    try:
+        _write_line(port, command)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[fragrance-bridge] 팬 상태 복구 실패: {exc}", file=sys.stderr)
 
 
 def _read_sys(path: Path) -> str:
@@ -302,7 +333,7 @@ def _open_serial_candidate(path: str):
 
 
 def _open_serial_locked() -> bool:
-    global ser, serial_error, SERIAL_PORT
+    global ser, ser_inode, serial_error, SERIAL_PORT
 
     if serial is None:
         serial_error = "pyserial 미설치 (pip install pyserial)"
@@ -325,9 +356,12 @@ def _open_serial_locked() -> bool:
         candidate = None
         try:
             candidate = _open_serial_candidate(path)
-            _wait_until_ready(candidate)
+            rebooted = _wait_until_ready(candidate)
             _apply_polarity(candidate)
+            if rebooted:
+                _restore_fan_state(candidate)
             ser = candidate
+            ser_inode = _device_inode(path)
             SERIAL_PORT = path
             serial_error = None
             print(f"[fragrance-bridge] serial {path} @ {BAUD_RATE}", file=sys.stderr)
@@ -442,11 +476,19 @@ def send_commands(commands: list[str]) -> tuple[bool, list[str]]:
             _drain(ser)
             for line in commands:
                 line_replies = _write_line(ser, line)
+                if _looks_garbled(line_replies):
+                    print("[fragrance-bridge] 응답 깨짐 → 포트 다시 열고 재전송", file=sys.stderr)
+                    ser.close()
+                    ser = None
+                    if not _open_serial_locked():
+                        return False, ["NOT CONNECTED"]
+                    line_replies = _write_line(ser, line)
                 replies.extend(line_replies)
                 if _looks_rebooted(line_replies):
                     # 리셋되면 극성이 POL1 로 돌아가고 방금 명령도 사라진다.
                     print("[fragrance-bridge] 아두이노 재부팅 감지 → 극성 복구 후 재전송", file=sys.stderr)
                     _apply_polarity(ser)
+                    _restore_fan_state(ser)
                     replies.extend(_write_line(ser, line))
         except Exception as exc:  # noqa: BLE001
             print(f"[fragrance-bridge] write failed: {exc}", file=sys.stderr)

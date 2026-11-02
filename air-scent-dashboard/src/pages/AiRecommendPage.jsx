@@ -14,7 +14,7 @@ import useSpeechInput, {
   isSecureSpeechContext,
 } from "../hooks/useSpeechInput";
 import useTtsSpeak from "../hooks/useTtsSpeak";
-import { getRecipeById, getRecipeVisuals, scentDisplayName } from "../data/scentRecipes";
+import { getRecipeById, getRecipeVisuals, scentDisplayName, scentLabel, localizeScentText } from "../data/scentRecipes";
 import {
   requestScentRecommendation,
   validateDispenseRequest,
@@ -75,13 +75,13 @@ function stripTrailingAsk(text) {
 }
 
 function buildRecommendText(result, userForm) {
-  const reason = stripTrailingAsk(result.reason);
+  const reason = localizeScentText(stripTrailingAsk(result.reason));
   if (reason) {
     return reason;
   }
 
   const spoken = spokenFromForm(userForm);
-  const name = result.recipe_name;
+  const name = scentLabel(scentDisplayName(result.recipe_name));
   if (spoken) {
     return `${spoken}라고 하셔서 ${name} 향이 좋을 것 같아요.`;
   }
@@ -134,6 +134,7 @@ function AiRecommendPage({
   initialView = "recommend",
   onBack,
   onApplyRecommendation,
+  seedPrompt = "",
 }) {
   const [view, setView] = useState(initialView);
   const [form, setForm] = useState(INITIAL_FORM);
@@ -175,14 +176,12 @@ function AiRecommendPage({
       mqtt: {
         label: mqttAirQuality?.label,
         confidence: mqttAirQuality?.confidence,
-        isWoody: mqttAirQuality?.isWoody,
       },
       timePeriod: period,
       cartridgeRemaining: fragranceCartridgeRemaining,
       lastDispenseAt,
       context: {
         bme688: { humidity: data.humidity },
-        mqtt: { isWoody: mqttAirQuality?.isWoody },
       },
     }),
     [data, mqttAirQuality, period, fragranceCartridgeRemaining, lastDispenseAt]
@@ -200,7 +199,6 @@ function AiRecommendPage({
         lastDispenseAt,
         context: {
           bme688: { humidity: data.humidity },
-          mqtt: { isWoody: mqttAirQuality?.isWoody },
         },
       };
 
@@ -218,7 +216,7 @@ function AiRecommendPage({
           setValidation(local);
         });
     },
-    [data.humidity, fragranceCartridgeRemaining, lastDispenseAt, mqttAirQuality?.isWoody]
+    [data.humidity, fragranceCartridgeRemaining, lastDispenseAt]
   );
 
   const fetchRecommendation = useCallback(
@@ -410,14 +408,60 @@ function AiRecommendPage({
     }, 400);
   }, [appendMessage, stop, targetWardName]);
 
+  const startFromText = useCallback(
+    (text) => {
+      const spoken = String(text || "").trim();
+      if (!spoken) return;
+
+      if (stepTimerRef.current) {
+        clearTimeout(stepTimerRef.current);
+        stepTimerRef.current = null;
+      }
+
+      stop();
+
+      const sessionId = chatSessionRef.current + 1;
+      chatSessionRef.current = sessionId;
+
+      const nextForm = {
+        ...INITIAL_FORM,
+        needNow: spoken,
+        currentMood: spoken,
+        desiredState: spoken,
+        intensityPreference: parseIntensity(spoken),
+      };
+      setForm(nextForm);
+      formRef.current = nextForm;
+      setChatMessages([{ role: "user", text: spoken }]);
+      setRecommendation(null);
+      setValidation(null);
+      setError(null);
+      setStepIndex(0);
+      setChatStatus("thinking");
+      fetchRecommendation(nextForm);
+    },
+    [fetchRecommendation, stop]
+  );
+
   retryChatRef.current = startChatSession;
+
+  const startChatSessionRef = useRef(startChatSession);
+  const startFromTextRef = useRef(startFromText);
+  startChatSessionRef.current = startChatSession;
+  startFromTextRef.current = startFromText;
 
   useEffect(() => {
     if (view !== "chat") {
       return undefined;
     }
 
-    startChatSession();
+    // 센서·MQTT가 바뀔 때마다 콜백이 새로 생겨도 진행 중인 추천을 취소하지 않는다.
+    const typed = String(seedPrompt || "").trim();
+    if (typed) {
+      startFromTextRef.current(typed);
+    } else {
+      startChatSessionRef.current();
+    }
 
     return () => {
       if (stepTimerRef.current) {
@@ -427,7 +471,7 @@ function AiRecommendPage({
       chatSessionRef.current += 1;
       stop();
     };
-  }, [view, startChatSession, stop]);
+  }, [view, seedPrompt, stop]);
 
   const handleMicClick = async (event) => {
     event.preventDefault();
@@ -503,8 +547,8 @@ function AiRecommendPage({
         wardName: targetWardName,
       };
       const savedText = targetWardName
-        ? `${scentName}으로 설정해 둘게요. ${targetWardName}에 가서 발향 시작을 눌러 주세요.`
-        : `${scentName}으로 설정해 둘게요. 위치에서 발향 시작을 눌러 주세요.`;
+        ? `${scentLabel(scentName)}로 설정해 둘게요. ${targetWardName}에 가서 발향 시작을 눌러 주세요.`
+        : `${scentLabel(scentName)}로 설정해 둘게요. 위치에서 발향 시작을 눌러 주세요.`;
 
       onApplyRecommendation?.({
         ...applyPayload,
@@ -738,8 +782,10 @@ function AiRecommendPage({
       <article className="ai-recommend-card">
         <div>
           <p className="section-label">추천 향기</p>
-          <p className="ai-small-text">지금 거실에 어울리는</p>
-          <h1>{recommendedFragrance} ✨</h1>
+          <p className="ai-small-text">
+            {targetWardName ? `지금 ${targetWardName}에 어울리는` : "지금 이곳에 어울리는"}
+          </p>
+          <h1>{scentLabel(recommendedFragrance)} ✨</h1>
         </div>
 
         <div className="ai-object">
@@ -799,7 +845,7 @@ function AiRecommendPage({
 
           <p className="section-label">추천 이유</p>
           <h2>
-            {recommendedReason ??
+            {(recommendedReason && localizeScentText(recommendedReason)) ??
               "AI 추천을 받으면 여기에 이유가 표시됩니다."}
           </h2>
         </article>

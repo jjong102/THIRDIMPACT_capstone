@@ -1,10 +1,13 @@
+import { scentLabel } from "../data/scentRecipes";
+import { sensorLabelTone } from "./sensorLabels";
+
 /** 냄새 분류 톤 → 이모지·색 (GDM/대시보드 톤) */
 
 export const SCENT_TONES = {
-  woody: {
-    emoji: "🍋",
-    title: "시트러스 감지",
-    short: "Citrus",
+  orange: {
+    emoji: "🍊",
+    title: "오렌지 감지",
+    short: "Orange",
     color: "#d97706",
     glow: "rgba(217, 119, 6, 0.45)",
     soft: "rgba(251, 191, 36, 0.28)",
@@ -17,10 +20,10 @@ export const SCENT_TONES = {
     glow: "rgba(122, 92, 22, 0.58)",
     soft: "rgba(90, 78, 24, 0.42)",
   },
-  musk: {
-    emoji: "🪵",
-    title: "우디 감지",
-    short: "Woody",
+  mint: {
+    emoji: "🌿",
+    title: "페퍼민트 감지",
+    short: "Peppermint",
     color: "#64748b",
     glow: "rgba(100, 116, 139, 0.4)",
     soft: "rgba(148, 163, 184, 0.3)",
@@ -71,7 +74,7 @@ export const KITCHEN_DEMO_READING = {
   label: "Fresh Air",
   confidence: 96,
   tone: "fresh",
-  isWoody: false,
+  isOrange: false,
   raw: "Fresh Air (96%)",
   roomId: "room_2",
 };
@@ -99,24 +102,13 @@ export function isKitchenWard(ward) {
 export function displayWardScentLabel(label) {
   const text = String(label ?? "").trim();
   if (!text) return null;
-  if (/floral|lavender|라벤더|플로럴/i.test(text)) {
-    return "odor";
-  }
   if (/^(fresh(\s*air)?|air)$/i.test(text)) {
     return "Fresh Air";
   }
-  if (/musk|머스크/i.test(text)) {
-    return "Woody";
-  }
-  if (/citrus|시트러스/i.test(text)) {
-    return "Citrus";
-  }
-  if (/woody|우드/i.test(text)) {
-    return "Citrus";
-  }
-  if (/우디/i.test(text)) {
-    return "Woody";
-  }
+  const tone = sensorLabelTone(text);
+  if (tone === "lavender") return "odor";
+  if (tone === "mint") return "Mint";
+  if (tone === "orange") return "Orange";
   return text;
 }
 
@@ -134,18 +126,13 @@ export function resolveScentTone(reading) {
   const toneHint = reading.tone;
 
   // 라벨 우선 — air / Fresh Air 를 확실히 fresh로
-  if (/fresh\s*air|fresh|clean|무취|청정|(^|[^a-z])air([^a-z]|$)/i.test(label)) {
-    return "fresh";
-  }
-  if (/citrus|시트러스/i.test(label)) return "woody";
-  if (/woody|우드/i.test(label)) return "woody";
-  if (/floral|lavender|라벤더|플로럴|odor/i.test(label)) return "lavender";
-  if (/musk|머스크|우디/i.test(label)) return "musk";
+  const fromLabel = sensorLabelTone(label);
+  if (fromLabel) return fromLabel;
 
   if (toneHint && SCENT_TONES[toneHint] && toneHint !== "unknown") {
     return toneHint;
   }
-  if (reading.isWoody || reading.is_woody) return "woody";
+  if (reading.isOrange || reading.is_orange) return "orange";
   if (label.trim()) return "other";
   return "waiting";
 }
@@ -163,8 +150,9 @@ export function getScentVisual(reading, { connected = true } = {}) {
     reading?.confidence != null ? `${reading.confidence}%` : null;
 
   // MQTT 원문 라벨을 제목으로 써서 Fresh Air(100%)가 바로 보이게
-  const title = label || base.title;
-  const detail = [label && label !== title ? label : null, confidence]
+  const shown = label ? scentLabel(label) : null;
+  const title = shown || base.title;
+  const detail = [shown && shown !== title ? shown : null, confidence]
     .filter(Boolean)
     .join(" · ");
 
@@ -174,7 +162,7 @@ export function getScentVisual(reading, { connected = true } = {}) {
     label,
     confidence,
     title,
-    short: label || base.short,
+    short: shown || base.short,
     detail: detail || base.title,
   };
 }

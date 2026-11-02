@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Fan,
   SprayCan,
-  Sparkles,
   Moon,
   Heart,
   House,
@@ -12,8 +11,12 @@ import {
 
 import FragranceBlendPage from "./FragranceBlendPage";
 import AiRecommendPage from "./AiRecommendPage";
-import { scentDisplayName } from "../data/scentRecipes";
-import { AIR_PURIFIER_MODE_LABELS } from "../utils/airPurifierCommand";
+import { scentDisplayName, scentLabel } from "../data/scentRecipes";
+import {
+  AIR_PURIFIER_MODE,
+  AIR_PURIFIER_MODE_KEYS,
+  AIR_PURIFIER_MODE_LABELS,
+} from "../utils/airPurifierCommand";
 import {
   getWardScent,
   loadSelectedWardId,
@@ -36,11 +39,11 @@ import "./FragrancePage.css";
 import "./ControlPage.css";
 
 function AirModeIconDisplay({ mode }) {
-  if (mode === 2) {
+  if (mode === AIR_PURIFIER_MODE.SLEEP) {
     return <Moon size={26} strokeWidth={2.2} />;
   }
 
-  if (mode === 3) {
+  if (mode === AIR_PURIFIER_MODE.TURBO) {
     return (
       <span className="control-air-mode-badge" aria-hidden="true">
         <Heart size={16} strokeWidth={2.2} fill="currentColor" />
@@ -245,7 +248,7 @@ function ControlPage({
               <>
                 <button
                   type="button"
-                  className={`control-mode-btn center mode-${airPurifierMode}`}
+                  className={`control-mode-btn center mode-${AIR_PURIFIER_MODE_KEYS[airPurifierMode]}`}
                   disabled={airPurifierSending}
                   onClick={onCycleAirPurifierMode}
                   aria-label="공기청정 모드 변경"
@@ -275,7 +278,7 @@ function ControlPage({
                 aria-pressed={false}
               >
                 <div className="control-mode-btn-icon">
-                  <AirModeIconDisplay mode={1} />
+                  <AirModeIconDisplay mode={AIR_PURIFIER_MODE.AUTO} />
                 </div>
                 <strong>{airPurifierSending ? "전송 중..." : "꺼짐"}</strong>
                 <span>탭하여 켜기</span>
@@ -310,7 +313,7 @@ function ControlPage({
 
               {wards.length === 0 ? (
                 <p className="control-location-empty">
-                  이동 탭에서 집 위치를 설정해 주세요
+                  홈 탭에서 집 위치를 설정해 주세요
                 </p>
               ) : (
                 <div
@@ -346,7 +349,7 @@ function ControlPage({
                             ) : null}
                           </span>
                           <strong className="control-location-fragrance">
-                            {scentDisplayName(scent.fragrance)}
+                            {scentLabel(scentDisplayName(scent.fragrance))}
                           </strong>
                           <em className="control-location-level">
                               {labelForTargetPercent(scent.level)} {clampTargetPercent(scent.level)}%
@@ -358,26 +361,6 @@ function ControlPage({
                 </div>
               )}
 
-              <div className="control-scent-actions">
-                <button
-                  type="button"
-                  className="control-scent-action blend"
-                  disabled={!selectedWard}
-                  onClick={() => setView("blend")}
-                >
-                  <SprayCan size={16} />
-                  <span>향기 선택</span>
-                </button>
-                <button
-                  type="button"
-                  className="control-scent-action ai"
-                  disabled={!selectedWard}
-                  onClick={() => setView("ai")}
-                >
-                  <Sparkles size={16} />
-                  <span>AI 추천받기</span>
-                </button>
-              </div>
             </div>
 
             <p className="control-blend-summary">

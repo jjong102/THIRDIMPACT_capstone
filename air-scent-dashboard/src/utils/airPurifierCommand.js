@@ -1,7 +1,20 @@
+/** 펌웨어 MODE 번호(버튼 누른 순서) → 실제 공청기 모드: 1 고속 → 2 자동 → 3 수면 */
+export const AIR_PURIFIER_MODE = {
+  TURBO: 1,
+  AUTO: 2,
+  SLEEP: 3,
+};
+
+export const AIR_PURIFIER_MODE_KEYS = {
+  [AIR_PURIFIER_MODE.TURBO]: "turbo",
+  [AIR_PURIFIER_MODE.AUTO]: "auto",
+  [AIR_PURIFIER_MODE.SLEEP]: "sleep",
+};
+
 export const AIR_PURIFIER_MODE_LABELS = {
-  1: "자동모드",
-  2: "수면모드",
-  3: "고속모드",
+  [AIR_PURIFIER_MODE.TURBO]: "고속모드",
+  [AIR_PURIFIER_MODE.AUTO]: "자동모드",
+  [AIR_PURIFIER_MODE.SLEEP]: "수면모드",
 };
 
 /** 펌웨어에 FANON/FANOFF 없음. 팬만 켤 때는 ON000, 끌 때는 OFF+현재미스트 */

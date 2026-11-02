@@ -4,11 +4,12 @@ import { Minus, Plus, SprayCan, Sparkles } from "lucide-react";
 import FragranceBlendPage from "./FragranceBlendPage";
 import AiRecommendPage from "./AiRecommendPage";
 import "./FragrancePage.css";
+import { scentLabel } from "../data/scentRecipes";
 
 const blendPreviewNotes = [
-  { id: "musk", label: "Woody", color: "#8b5cf6" },
-  { id: "lavender", label: "Floral", color: "#3b82f6" },
-  { id: "woody", label: "Citrus", color: "#d97706" },
+  { id: "mint", label: "Peppermint", color: "#8b5cf6" },
+  { id: "lavender", label: "Lavender", color: "#3b82f6" },
+  { id: "orange", label: "Orange", color: "#d97706" },
 ];
 
 function FragrancePage({
@@ -93,7 +94,7 @@ function FragrancePage({
 
           <div className="fragrance-hero-text">
             <p className="section-label">현재 향기</p>
-            <h1>{currentFragrance}</h1>
+            <h1>{scentLabel(currentFragrance)}</h1>
             <span className={`fragrance-status-badge ${fragranceOn ? "on" : "off"}`}>
               {fragranceSending
                 ? "전송 중..."
@@ -183,7 +184,7 @@ function FragrancePage({
             </div>
             <div>
               <strong>향기 선택</strong>
-              <span>Woody · Floral · Citrus</span>
+              <span>Peppermint · Lavender · Orange</span>
             </div>
           </button>
 

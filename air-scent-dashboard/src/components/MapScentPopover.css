@@ -1,0 +1,181 @@
+.map-scent-popover {
+  position: fixed;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.2);
+  pointer-events: auto;
+}
+
+.map-scent-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(15, 23, 42, 0.28);
+}
+
+.map-scent-popover.wide {
+  max-height: min(560px, calc(100vh - 24px));
+}
+
+.map-scent-popover.centered {
+  position: relative;
+  width: min(400px, 100%);
+  max-height: min(560px, calc(100vh - 32px));
+}
+
+.map-scent-popover-arrow {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: #ffffff;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.map-scent-popover.above .map-scent-popover-arrow {
+  bottom: 0;
+  transform: translate(-50%, 5px) rotate(45deg);
+}
+
+.map-scent-popover.below .map-scent-popover-arrow {
+  top: 0;
+  transform: translate(-50%, -5px) rotate(225deg);
+}
+
+.map-scent-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.map-scent-popover-head p {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 900;
+  color: #6d28d9;
+}
+
+.map-scent-popover-head button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: var(--text-sub);
+  cursor: pointer;
+}
+
+.map-pin-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.map-pin-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.map-pin-action:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.map-pin-action.air.off {
+  color: #334155;
+  background: #f1f5f9;
+}
+
+.map-pin-action.air.on {
+  color: #047857;
+  background: #ecfdf5;
+}
+
+.map-pin-action.scent {
+  color: #ffffff;
+  background: linear-gradient(135deg, var(--purple), var(--blue));
+}
+
+.map-dev-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 2px 2px;
+}
+
+.map-dev-prompt label {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--text-sub);
+}
+
+.map-dev-prompt textarea {
+  width: 100%;
+  min-height: 88px;
+  resize: none;
+  padding: 12px;
+  border: 1px solid #ddd6fe;
+  border-radius: 12px;
+  background: #ffffff;
+  color: var(--text-main);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 750;
+  line-height: 1.4;
+  outline: none;
+}
+
+.map-dev-prompt textarea:focus {
+  border-color: #8b5cf6;
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.16);
+}
+
+.map-dev-prompt button {
+  height: 44px;
+  border: none;
+  border-radius: 12px;
+  color: #ffffff;
+  background: linear-gradient(135deg, var(--purple), var(--blue));
+  font-size: 15px;
+  font-weight: 900;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.map-dev-prompt button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.map-scent-popover-body:has(.ai-chat-page) {
+  height: min(480px, 64vh);
+  overflow: hidden;
+  display: flex;
+}
+
+.map-scent-popover-body .ai-chat-page {
+  flex: 1;
+  height: 100%;
+  min-height: 0;
+}

@@ -36,7 +36,9 @@ _generation_lock = threading.Lock()
 _play_proc: subprocess.Popen | None = None
 _play_proc_lock = threading.Lock()
 _engine_error: str | None = None
-_job_queue: queue.Queue[tuple[int, str]] = queue.Queue()
+_job_queue: queue.Queue[tuple[int, str, str]] = queue.Queue()
+VOICE_CLIP_DIR = Path(__file__).resolve().parent.parent / "public" / "voice-clips"
+VOICE_CLIP_EXT = {".wav", ".mp3", ".ogg", ".m4a"}
 _ODOR_LINES = (
     "거실에서 악취를 감지했습니다.",
 )
@@ -440,7 +442,7 @@ def enqueue_speak(text: str) -> dict:
         _recent_spoken_at[spoken] = now
 
     gen = current_generation()
-    _job_queue.put((gen, spoken))
+    _job_queue.put((gen, "speak", spoken))
     return {
         "ok": True,
         "queued": True,
@@ -450,15 +452,56 @@ def enqueue_speak(text: str) -> dict:
     }
 
 
+def list_voice_clips() -> list[dict]:
+    root = VOICE_CLIP_DIR.resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    clips = []
+    for path in sorted(root.iterdir(), key=lambda item: item.name.lower()):
+        if not path.is_file() or path.name.startswith("."):
+            continue
+        if path.suffix.lower() not in VOICE_CLIP_EXT:
+            continue
+        clips.append({"file": path.name, "label": path.stem})
+    return clips
+
+
+def resolve_voice_clip(filename: str) -> Path:
+    name = Path(str(filename or "")).name
+    suffix = Path(name).suffix.lower()
+    if suffix not in VOICE_CLIP_EXT:
+        raise ValueError("wav, mp3, ogg, m4a 파일만 재생할 수 있습니다")
+
+    root = VOICE_CLIP_DIR.resolve()
+    path = (root / name).resolve()
+    if path.parent != root:
+        raise ValueError("잘못된 파일입니다")
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"{name} 파일이 없습니다. public/voice-clips 폴더에 넣어 주세요."
+        )
+    return path
+
+
+def enqueue_clip(filename: str) -> dict:
+    path = resolve_voice_clip(filename)
+    stop_playback()
+    gen = current_generation()
+    _job_queue.put((gen, "clip", str(path)))
+    return {"ok": True, "queued": True, "file": path.name}
+
+
 def _speak_worker() -> None:
     global _engine_error
 
     while True:
-        gen, text = _job_queue.get()
+        gen, kind, payload = _job_queue.get()
         if gen != current_generation():
             continue
         try:
-            speak_now(text, gen)
+            if kind == "clip":
+                play_audio_file(payload, gen)
+            else:
+                speak_now(payload, gen)
         except Exception as exc:  # noqa: BLE001
             _engine_error = str(exc)
             print(f"[tts-bridge] {exc}", file=sys.stderr)
@@ -486,6 +529,10 @@ class TtsBridgeHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0].rstrip("/")
+        if path == "/api/tts/clips":
+            self._send_json(200, {"ok": True, "clips": list_voice_clips()})
+            return
+
         if path == "/api/tts/volume":
             self._send_json(200, {"ok": True, **volume_status()})
             return
@@ -527,6 +574,32 @@ class TtsBridgeHandler(BaseHTTPRequestHandler):
             volume = save_volume(payload.get("volume", DEFAULT_VOLUME))
             result = apply_sink_volume(volume)
             self._send_json(200, {"ok": True, **result})
+            return
+
+        if path == "/api/tts/clip":
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length) if length else b"{}"
+            try:
+                payload = json.loads(raw.decode("utf-8") or "{}")
+            except json.JSONDecodeError:
+                self._send_json(400, {"ok": False, "error": "잘못된 JSON입니다"})
+                return
+
+            try:
+                result = enqueue_clip(str(payload.get("file") or ""))
+            except FileNotFoundError as exc:
+                self._send_json(404, {"ok": False, "missing": True, "error": str(exc)})
+                return
+            except ValueError as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+                return
+            except Exception as exc:  # noqa: BLE001
+                print(f"[tts-bridge] {exc}", file=sys.stderr)
+                self._send_json(500, {"ok": False, "error": str(exc)})
+                return
+
+            print(f"[tts-bridge] clip → {result.get('file')}", file=sys.stderr)
+            self._send_json(200, result)
             return
 
         if path != "/api/tts/speak":

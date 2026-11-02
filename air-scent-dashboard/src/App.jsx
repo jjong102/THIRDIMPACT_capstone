@@ -1,17 +1,14 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 
 import Header from "./components/Header";
-import BottomNav from "./components/BottomNav";
 import EyeScreensaver from "./components/EyeScreensaver";
 
-import HomePage from "./pages/HomePage";
 import ControlPage from "./pages/ControlPage";
 import MovePage from "./pages/MovePage";
 import MorePage from "./pages/MorePage";
 
 import useArduinoControllers from "./hooks/useArduinoControllers";
 import useMqttAirQuality from "./hooks/useMqttAirQuality";
-import useOutdoorEnvironment from "./hooks/useOutdoorEnvironment";
 import useScentMission from "./hooks/useScentMission";
 import useScentMissionNav from "./hooks/useScentMissionNav";
 import useOdorResponse from "./hooks/useOdorResponse";
@@ -163,7 +160,6 @@ function App() {
   );
 
   const mqttAirQuality = useMqttAirQuality();
-  const outdoorEnvironment = useOutdoorEnvironment();
   const { goToWard, mapMeta } = useScentMissionNav();
   useOdorResponse({
     mqttAirQuality,
@@ -210,6 +206,7 @@ function App() {
     isFragranceSending,
     toggleAirPurifier,
     cycleAirPurifierMode,
+    selectAirPurifierMode,
     syncAirPurifierStatus,
     toggleFragrancePower,
     toggleFragranceChannel,
@@ -293,9 +290,9 @@ function App() {
       if (payload.blend) {
         setFragranceBlend(payload.blend);
         setFragranceChannels({
-          musk: Number(payload.blend.musk) > 0,
+          mint: Number(payload.blend.mint) > 0,
           lavender: Number(payload.blend.lavender) > 0,
-          woody: Number(payload.blend.woody) > 0,
+          orange: Number(payload.blend.orange) > 0,
         });
       }
       if (payload.intensity) {
@@ -310,7 +307,7 @@ function App() {
     setRecommendedFragrance(scentDisplayName(fragrance));
     setFragranceDispenseComplete(false);
     if (!(typeof payload === "object" && payload?.blend)) {
-      setFragranceChannels({ musk: true, lavender: true, woody: true });
+      setFragranceChannels({ mint: true, lavender: true, orange: true });
     }
 
     saveFragranceSession({
@@ -327,11 +324,11 @@ function App() {
       fragranceChannels:
         typeof payload === "object" && payload?.blend
           ? {
-              musk: Number(payload.blend.musk) > 0,
+              mint: Number(payload.blend.mint) > 0,
               lavender: Number(payload.blend.lavender) > 0,
-              woody: Number(payload.blend.woody) > 0,
+              orange: Number(payload.blend.orange) > 0,
             }
-          : { musk: true, lavender: true, woody: true },
+          : { mint: true, lavender: true, orange: true },
       fragranceDispenseComplete: false,
     });
 
@@ -368,18 +365,27 @@ function App() {
     switch (activePage) {
       case "home":
         return (
-          <HomePage
+          <MovePage
             data={robotData}
+            mqttAirQuality={mqttAirQuality}
+            airPurifierOn={airPurifierOn}
+            airPurifierMode={airPurifierMode}
+            airPurifierSending={isAirSending}
+            onToggleAirPurifier={toggleAirPurifier}
+            onCycleAirPurifierMode={cycleAirPurifierMode}
             fragranceOn={fragranceOn}
             fragranceDiffusing={fragranceDiffusing}
-            fragranceDispenseComplete={fragranceDispenseComplete}
-            mqttAirQuality={mqttAirQuality}
-            outdoorEnvironment={outdoorEnvironment}
+            fragranceSending={isFragranceSending}
             onStopFragrance={handleStopFragrance}
+            recommendedFragrance={recommendedFragrance}
+            recommendedReason={recommendedReason}
+            fragranceCartridgeRemaining={mockRobotData.fragranceCartridgeRemaining}
+            lastDispenseAt={lastDispenseAt}
+            onApplyFragrance={handleApplyFragrance}
           />
         );
 
-      case "control":
+      case "move":
         return (
           <ControlPage
             data={robotData}
@@ -406,19 +412,6 @@ function App() {
           />
         );
 
-      case "move":
-        return (
-          <MovePage
-            data={robotData}
-            mqttAirQuality={mqttAirQuality}
-            airPurifierOn={airPurifierOn}
-            fragranceOn={fragranceOn}
-            fragranceDiffusing={fragranceDiffusing}
-            fragranceSending={isFragranceSending}
-            onStopFragrance={handleStopFragrance}
-          />
-        );
-
       case "more":
         return (
           <MorePage
@@ -426,6 +419,9 @@ function App() {
             onSelectScreensaverCharacter={handleSelectScreensaverCharacter}
             airPurifierOn={airPurifierOn}
             airPurifierMode={airPurifierMode}
+            airPurifierSending={isAirSending}
+            onToggleAirPurifier={toggleAirPurifier}
+            onSelectAirPurifierMode={selectAirPurifierMode}
             onSetAirPurifierStatus={syncAirPurifierStatus}
             fragranceOn={fragranceOn}
             fragranceChannels={fragranceChannels}
@@ -439,14 +435,23 @@ function App() {
 
       default:
         return (
-          <HomePage
+          <MovePage
             data={robotData}
+            mqttAirQuality={mqttAirQuality}
+            airPurifierOn={airPurifierOn}
+            airPurifierMode={airPurifierMode}
+            airPurifierSending={isAirSending}
+            onToggleAirPurifier={toggleAirPurifier}
+            onCycleAirPurifierMode={cycleAirPurifierMode}
             fragranceOn={fragranceOn}
             fragranceDiffusing={fragranceDiffusing}
-            fragranceDispenseComplete={fragranceDispenseComplete}
-            mqttAirQuality={mqttAirQuality}
-            outdoorEnvironment={outdoorEnvironment}
+            fragranceSending={isFragranceSending}
             onStopFragrance={handleStopFragrance}
+            recommendedFragrance={recommendedFragrance}
+            recommendedReason={recommendedReason}
+            fragranceCartridgeRemaining={mockRobotData.fragranceCartridgeRemaining}
+            lastDispenseAt={lastDispenseAt}
+            onApplyFragrance={handleApplyFragrance}
           />
         );
     }
@@ -454,32 +459,27 @@ function App() {
 
   return (
     <div
-      className={`app${hideBottomNav ? " immersive" : ""}${activePage === "move" ? " map-focus" : ""}`}
+      className={`app${hideBottomNav ? " immersive" : ""}`}
     >
-      {activePage !== "move" && (
-        <Header
-          variant={hideBottomNav ? "ai-consult" : "default"}
-          onAiBack={aiBackHandler}
-          onActivateScreensaver={activateScreensaver}
-          screensaverIdleDisabled={screensaverIdleDisabled}
-          onToggleScreensaverIdle={toggleScreensaverIdle}
-          airPurifierOn={airPurifierOn}
-          fragranceOn={fragranceOn}
-          fragranceDiffusing={fragranceDiffusing}
-          arduinoConnected={arduinoConnected}
-        />
-      )}
+      <Header
+        variant={hideBottomNav ? "ai-consult" : "default"}
+        onAiBack={aiBackHandler}
+        onActivateScreensaver={activateScreensaver}
+        screensaverIdleDisabled={screensaverIdleDisabled}
+        onToggleScreensaverIdle={toggleScreensaverIdle}
+        airPurifierOn={airPurifierOn}
+        fragranceOn={fragranceOn}
+        fragranceDiffusing={fragranceDiffusing}
+        arduinoConnected={arduinoConnected}
+        settingsOpen={activePage === "more"}
+        onOpenSettings={() =>
+          setActivePage((page) => (page === "more" ? "home" : "more"))
+        }
+      />
 
       <main className="screen-content">
         {renderPage()}
       </main>
-
-      {!hideBottomNav && (
-        <BottomNav
-          activePage={activePage}
-          onChangePage={setActivePage}
-        />
-      )}
 
       <EyeScreensaver
         active={screensaverActive}

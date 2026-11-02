@@ -7,6 +7,10 @@
   z-index: 60;
 }
 
+body.map-expanded .app-header {
+  display: none;
+}
+
 .header-panel {
   position: absolute;
   inset: 0;
@@ -98,7 +102,20 @@
 }
 
 .header-wifi {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
   color: var(--green);
+}
+
+.header-wifi.is-l0,
+.header-wifi.is-l1 {
+  color: #f59e0b;
+}
+
+.header-wifi.is-off {
+  color: #94a3b8;
 }
 
 .header-status-icon {
@@ -125,7 +142,8 @@
 }
 
 .header-refresh-btn,
-.header-screensaver-btn {
+.header-screensaver-btn,
+.header-settings-btn {
   width: 36px;
   height: 36px;
   display: inline-flex;
@@ -145,17 +163,30 @@
 }
 
 .header-refresh-btn svg,
-.header-screensaver-btn svg {
+.header-screensaver-btn svg,
+.header-settings-btn svg {
   color: inherit;
 }
 
 .header-refresh-btn:active,
 .header-screensaver-btn:active,
-.header-screensaver-btn.is-holding {
+.header-screensaver-btn.is-holding,
+.header-settings-btn:active {
   transform: scale(0.95);
   background: #f1f5f9;
   border-color: #cbd5e1;
   color: #334155;
+}
+
+.header-settings-btn.is-active {
+  color: #ffffff;
+  background: linear-gradient(135deg, var(--blue), var(--purple));
+  border-color: transparent;
+}
+
+.header-settings-btn.is-active:active {
+  color: #ffffff;
+  background: linear-gradient(135deg, var(--blue), var(--purple));
 }
 
 .header-screensaver-btn.is-idle-off {

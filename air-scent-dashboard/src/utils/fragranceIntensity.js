@@ -1,3 +1,4 @@
+import { scentIdFromText } from "../data/scentRecipes";
 import { readingForWard, resolveScentTone } from "./scentVisual";
 import { loadWards } from "./wardStorage";
 
@@ -37,15 +38,13 @@ export function labelForTargetPercent(value) {
 }
 
 export function fragranceToTone(name, blend) {
-  const text = String(name || "").toLowerCase();
-  if (/floral|lavender|라벤더|플로럴/.test(text)) return "lavender";
-  if (/citrus|시트러스/.test(text)) return "woody";
-  if (/woody|우디|우드|musk|머스크/.test(text)) return "musk";
+  const scentId = scentIdFromText(name);
+  if (scentId) return scentId.toLowerCase();
 
   const ranked = [
-    ["musk", Number(blend?.musk) || 0],
+    ["mint", Number(blend?.mint) || 0],
     ["lavender", Number(blend?.lavender) || 0],
-    ["woody", Number(blend?.woody) || 0],
+    ["orange", Number(blend?.orange) || 0],
   ].sort((a, b) => b[1] - a[1]);
 
   return ranked[0][1] > 0 ? ranked[0][0] : null;
@@ -60,10 +59,10 @@ export function matchingScentPercent(reading, expectedTone) {
   if (["fresh", "waiting", "unknown", "offline"].includes(tone)) {
     return 0;
   }
-  if (expectedTone && ["woody", "lavender", "musk"].includes(expectedTone)) {
+  if (expectedTone && ["orange", "lavender", "mint"].includes(expectedTone)) {
     return tone === expectedTone ? confidence : 0;
   }
-  if (["woody", "lavender", "musk", "other"].includes(tone)) {
+  if (["orange", "lavender", "mint", "other"].includes(tone)) {
     return confidence;
   }
   return 0;
@@ -91,7 +90,7 @@ export function pickWardReading(mqttAirQuality, wardId) {
         label: mqttAirQuality.label,
         confidence: mqttAirQuality.confidence,
         tone: mqttAirQuality.tone,
-        isWoody: mqttAirQuality.isWoody,
+        isOrange: mqttAirQuality.isOrange,
         receivedAt: mqttAirQuality.receivedAt,
       }
     : rooms.default ?? null;

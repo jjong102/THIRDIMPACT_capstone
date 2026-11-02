@@ -6,29 +6,28 @@ export const WARDS_STORAGE_KEY = "air-scent-wards";
 export const WARD_SCENTS_STORAGE_KEY = "air-scent-ward-scents";
 export const HOME_SCENT_WARDS_KEY = "air-scent-home-scent-wards";
 export const SELECTED_WARD_ID_KEY = "air-scent-selected-ward";
-export const MAX_HOME_SCENT_WARDS = 2;
-export const MAX_WARDS = 2;
+export const MAX_HOME_SCENT_WARDS = 1;
+export const MAX_WARDS = 1;
 
 export const DEFAULT_WARDS = [
-  { id: "ward-home-1", name: "거실", x: 28, y: 48 },
-  { id: "ward-home-2", name: "주방", x: 72, y: 48 },
+  { id: "ward-home-1", name: "안방", x: 28, y: 48 },
 ];
 
 export const FRAGRANCE_PRESETS = [
   {
-    id: "Woody",
-    label: "Woody",
-    blend: { musk: 100, lavender: 0, woody: 0 },
+    id: "Mint",
+    label: "Peppermint",
+    blend: { mint: 100, lavender: 0, orange: 0 },
   },
   {
-    id: "Floral",
-    label: "Floral",
-    blend: { musk: 0, lavender: 100, woody: 0 },
+    id: "Lavender",
+    label: "Lavender",
+    blend: { mint: 0, lavender: 100, orange: 0 },
   },
   {
-    id: "Citrus",
-    label: "Citrus",
-    blend: { musk: 0, lavender: 0, woody: 100 },
+    id: "Orange",
+    label: "Orange",
+    blend: { mint: 0, lavender: 0, orange: 100 },
   },
 ];
 
@@ -42,18 +41,19 @@ export function defaultWardScent() {
 }
 
 const ROOM_DISPLAY_BY_ID = {
-  room_1: "거실",
-  room1: "거실",
-  ward_home_1: "거실",
+  room_1: "안방",
+  room1: "안방",
+  ward_home_1: "안방",
   room_2: "주방",
   room2: "주방",
   ward_home_2: "주방",
 };
 
 const ROOM_DISPLAY_BY_NAME = {
-  room1: "거실",
-  room_1: "거실",
-  "302호": "거실",
+  room1: "안방",
+  room_1: "안방",
+  "302호": "안방",
+  "거실": "안방",
   room2: "주방",
   room_2: "주방",
   "집2": "주방",
@@ -146,6 +146,18 @@ export function saveSelectedWardId(id) {
   return id;
 }
 
+export function clearWardScent(wardId) {
+  if (!wardId) {
+    return loadWardScents();
+  }
+  const next = {
+    ...loadWardScents(),
+    [wardId]: { unset: true },
+  };
+  saveWardScents(next);
+  return next;
+}
+
 export function persistWardScent(wardId, patch) {
   if (!wardId) {
     return loadWardScents();
@@ -183,7 +195,7 @@ export function getWardScent(scents, wardId) {
 
 export function summarizeBlend(blend) {
   if (!blend) return "—";
-  return `M${blend.musk} L${blend.lavender} W${blend.woody}`;
+  return `W${blend.mint} F${blend.lavender} C${blend.orange}`;
 }
 
 export function loadHomeScentWardIds() {

@@ -1,6 +1,7 @@
 import { Fan, SprayCan, Sparkles, Droplets } from "lucide-react";
 
 import "./AirQualityPage.css";
+import { scentLabel } from "../data/scentRecipes";
 
 function AirQualityPage({
   data,
@@ -101,7 +102,7 @@ function AirQualityPage({
       </div>
 
       <p className="air-fragrance-note">
-        현재 향기: <strong>{currentFragrance}</strong>
+        현재 향기: <strong>{scentLabel(currentFragrance)}</strong>
         {!data.arduinoConnected && (
           <>
             {" "}

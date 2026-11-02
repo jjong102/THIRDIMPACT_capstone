@@ -19,14 +19,9 @@ export const MIN_CARTRIDGE_PERCENT = 10;
  */
 export const FORBIDDEN_COMBINATIONS = [
   {
-    recipeIds: ["R001"],
-    when: (ctx) => ctx.mqtt?.isWoody === true,
-    reason: "실내에 우디 냄새가 감지되어 우디 향은 사용할 수 없습니다.",
-  },
-  {
     recipeIds: ["R003"],
     when: (ctx) => ctx.bme688?.humidity != null && ctx.bme688.humidity < 30,
-    reason: "습도가 너무 낮아 시트러스 향은 사용할 수 없습니다.",
+    reason: "습도가 너무 낮아 오렌지 향은 사용할 수 없습니다.",
   },
 ];
 

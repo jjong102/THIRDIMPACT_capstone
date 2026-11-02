@@ -38,7 +38,7 @@ UI_STATE_PATH = Path(
         Path(__file__).resolve().parent / ".move-ui-state.json",
     )
 )
-MAX_UI_WARDS = 2
+MAX_UI_WARDS = 1
 
 # RViz 2D Pose Estimate defaults (x, y, yaw variance)
 DEFAULT_COVARIANCE = [0.0] * 36
