@@ -117,10 +117,11 @@ def main():
                     help="브로커 인증서 검증 생략 (기본은 검증. 인증서 오류가 날 때만)")
     args = ap.parse_args()
 
-    broker = os.environ.get("MQTT_BROKER", "").strip()
-    user = os.environ.get("MQTT_USER", "").strip()
-    pw = os.environ.get("MQTT_PASS", "")
-    port = int(os.environ.get("MQTT_PORT", "8883"))
+    from push_model import _env                # 환경변수, 없으면 Windows 사용자 환경변수(레지스트리)
+    broker = _env("MQTT_BROKER").strip()
+    user = _env("MQTT_USER").strip()
+    pw = _env("MQTT_PASS")
+    port = int(_env("MQTT_PORT") or "8883")
     if (not broker or not user or not pw) and sys.stdin.isatty():
         # 환경변수가 없으면 직접 묻는다 (비밀번호는 화면·명령 기록에 안 남게 getpass)
         import getpass

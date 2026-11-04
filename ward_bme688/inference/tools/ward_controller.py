@@ -63,6 +63,7 @@ class Controller:
         self.run_on = self.run_off = 0    # 연속 사이클 수
         self.air_run = 0
         self.calm_run = 0                 # 청정기 꺼진 채 Air/Weak 가 이어진 사이클 수 (기준선 다시 잡기용)
+        self.stuck_run = 0                # 청정기 켜진 채 켬 쪽 판정이 이어진 사이클 수 (갇힘 풀기용)
         self.lock_until = -1.0            # 이 시각(초)까지는 Unknown 으로 켜지 않음 (스스로 뿌린 향)
         self.rebases = []                 # 기준선을 다시 잡은 시각들
         self.log = []                     # (sec, 판정, k, n, |Δ|중앙, 청정기)
@@ -104,6 +105,28 @@ class Controller:
         for key, v in acc.items():
             if key in self.st.base:
                 self.st.base[key] = (1 - a) * self.st.base[key] + a * (sum(v) / len(v))
+
+    def _stuck_rebase(self, sec, want):
+        """청정기가 켜진 채 '켬 쪽' 판정이 --stuck-rebase 초 동안 평평하게(변화 없이)이어지면 기준선을 다시 잡는다.
+        실제 악취(양말 등)는 치우면 줄어들지만, 기준선이 어긋난 경우(예열 중에 잡힌 기준선이 흘러감)는
+        세기가 일정하게 멈춰 '모르는 냄새 → 청정기 계속 켬' 에 갇힌다 (11/04 배터리 와드, |Δ| 0.38 로 15분).
+        그대로 두면 다시 끌 방법이 없어서, 충분히 오래·평평할 때만 지금을 새 기준으로 삼는다."""
+        if self.args.stuck_rebase <= 0 or not self.purifier or want is not True:
+            self.stuck_run = 0
+            return
+        self.stuck_run += 1
+        if self.stuck_run * 9.7 < self.args.stuck_rebase or sec - self.on_since < self.args.min_on:
+            return
+        res = self.st.groups()
+        if res is None:
+            return
+        _, g = res
+        m = g[:, 0] >= sec - self.args.stuck_rebase
+        if m.sum() >= 5 and np.ptp(g[m, 1]) < self.args.flat:
+            self.st.set_baseline(60)
+            self.rebases.append(sec)
+            self.stuck_run = 0
+            self._say(f"기준선 다시 잡음 — 켜진 채 {self.args.stuck_rebase:.0f}초 동안 변화 없음 (기준선 어긋남으로 판단)")
 
     def _rebase(self, sec, top):
         """청정기가 꺼진 채 Air·Weak(보류)만 --rebase 초 이상 이어지고 그동안 평균선이 평평하면
@@ -181,6 +204,7 @@ class Controller:
                 self.note_spray(sec)
         self._track_baseline(mags)
         self._rebase(sec, top)
+        self._stuck_rebase(sec, want)
         self.log.append((sec, top, k, n, float(np.median(mags)), self.purifier))
         if self.args.verbose:
             print(f"  {sec/60:6.1f}분  {top:10s} {k}/{n}  |Δ| {np.median(mags):5.2f}"
@@ -227,6 +251,7 @@ def main():
     ap.add_argument("--model", type=Path, default=MODEL, help="기본 inference/openset_model.json")
     ap.add_argument("csv", nargs="?", type=Path, help="따라갈 녹화 CSV (생략하면 가장 최근)")
     ap.add_argument("--replay", type=Path, help="녹화 파일을 처음부터 끝까지 빠르게 재생 (리허설)")
+    ap.add_argument("--port", help="시리얼(예: COM5)을 직접 읽어 판정만 함 — 녹화·그래프 없이 추론만 볼 때")
     ap.add_argument("--send", action="store_true", help="실제로 브리지에 명령 전송 (기본 dry-run)")
     ap.add_argument("--bridge", default="http://127.0.0.1:5174/api/fragrance/command")
     ap.add_argument("--on", nargs="*", default=None, help="청정기를 켤 향 라벨 (기본: 모델 설정)")
@@ -242,6 +267,8 @@ def main():
     ap.add_argument("--track", type=float, default=0.02, help="기준선 추종 비율 (0 이면 끔)")
     ap.add_argument("--rebase", type=float, default=180.0,
                     help="청정기 꺼진 채 Air/보류가 이 시간(초) 평평하게 이어지면 기준선을 다시 잡음 (0 이면 끔)")
+    ap.add_argument("--stuck-rebase", type=float, default=300.0,
+                    help="청정기 켜진 채 켬 쪽 판정이 이 시간(초) 평평하게 이어지면 기준선을 다시 잡음 (0 이면 끔)")
     ap.add_argument("--rebase-weak", action="store_true",
                     help="보류(Weak) 상태에서도 기준선을 다시 잡음 (기본은 Air 일 때만)")
     ap.add_argument("--spray-lock", type=float, default=180.0,
@@ -262,6 +289,27 @@ def main():
         for ln in args.replay.read_text(encoding="utf-8", errors="replace").splitlines():
             c.feed(ln.strip())
         summarize(c)
+        return
+
+    if args.port:                        # 시리얼을 직접 읽어 판정만 (녹화·그래프 없음)
+        import serial
+        print(f"[입력] {args.port} 직접 ({'실제 전송' if args.send else 'dry-run'})  녹화 안 함 · Ctrl+C 로 종료\n"
+              "  기준선은 켠 지 1분 지나고 평균선이 1분 평평해지면 자동으로 잡힌다 (보통 2~5분)\n")
+        ser = serial.Serial(args.port, 115200, timeout=1)
+        last_note = time.time()
+        try:
+            while True:
+                raw = ser.readline()
+                if raw:
+                    ln = raw.decode("utf-8", errors="replace").strip()
+                    if ln.startswith("# I ") or "Brownout" in ln or ln.startswith("rst:"):
+                        print(f"  [와드] {ln[2:] if ln.startswith('# ') else ln}")   # 와드 온디바이스 판정도 같이 보여 줌
+                    c.feed(ln)
+                if c.st.base is None and time.time() - last_note > 30:
+                    print(f"  … 예열 중 ({c.st.sec_now/60:.1f}분, 기준선 기다림)")
+                    last_note = time.time()
+        except KeyboardInterrupt:
+            summarize(c)
         return
 
     path = args.csv or newest_csv()

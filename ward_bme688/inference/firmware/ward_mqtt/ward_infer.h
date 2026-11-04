@@ -72,10 +72,11 @@ typedef struct {                  /* ward_controller.py 기본값과 같음 */
   float rebase;                   /* 180 초 (0 = 끔) */
   int   rebase_weak;              /* 0   */
   float spray_lock;               /* 180 초 */
+  float stuck_rebase;             /* 300 초 (0 = 끔) — 켜진 채 켬 쪽이 평평하면 기준선 다시 */
 } wi_params_t;
 
 static inline wi_params_t wi_default_params(void) {
-  wi_params_t p = {3, 12, 180.0f, 60.0f, 0.05f, 0.02f, 180.0f, 0, 180.0f};
+  wi_params_t p = {3, 12, 180.0f, 60.0f, 0.05f, 0.02f, 180.0f, 0, 180.0f, 300.0f};
   return p;
 }
 
@@ -86,7 +87,7 @@ typedef struct {                  /* 한 번의 판정(라운드) 결과 */
   float mag;                      /* 센서별 |Δ| 중앙값 */
   int   purifier;                 /* 권고 상태 1 = ON */
   int   event;                    /* 0 없음, 1 = 방금 ON, 2 = 방금 OFF */
-  int   rebased;                  /* 1 = 이번에 기준선을 다시 잡음 */
+  int   rebased;                  /* 1 = 기준선 다시 잡음(평평한 공기), 2 = 켜진 채 갇힘을 풀려고 다시 잡음 */
 } wi_decision_t;
 
 typedef struct {
@@ -109,7 +110,7 @@ typedef struct {
   /* 이번 라운드 센서별 판정 (도착 순서) */
   int    pred_lab[WI_NS]; float pred_mag[WI_NS]; int8_t pred_ord[WI_NS]; int pred_n; uint8_t pred_flag;
   /* 제어 */
-  int    purifier; float on_since; int run_on, run_off, air_run, calm_run; float lock_until;
+  int    purifier; float on_since; int run_on, run_off, air_run, calm_run, stuck_run; float lock_until;
   wi_decision_t last;
   int    n_decisions;
 } wi_state_t;
@@ -236,10 +237,10 @@ static inline void wi_decide(wi_state_t *S, float sec) {
   else if (S->purifier && S->run_off >= S->P.off_cycles && sec - S->on_since >= S->P.min_on) { S->purifier = 0; D.event = 2; }
   /* 기준선 추종: Air 가 6사이클 이상, 변화량이 문턱 절반 아래일 때만 아주 조금 */
   if (S->air_run >= 6 && med <= S->M.tau_air / 2) {
-    int s; float m, a = S->P.track;
-    for (s = 0; s < WI_NS; s++) for (k = 0; k < WI_STEPS; k++)
-      if ((S->base_ok[s] >> k) & 1u)
-        if (wi_recent_mean(S, s, k, S->sec_now - 60.0f, &m)) S->base[s][k] = (1 - a) * S->base[s][k] + a * m;
+    int s, st; float m, a = S->P.track;          /* st: 단계 번호 (k 는 표 수라 덮어쓰면 안 됨 — 11/04 '10/8' 버그) */
+    for (s = 0; s < WI_NS; s++) for (st = 0; st < WI_STEPS; st++)
+      if ((S->base_ok[s] >> st) & 1u)
+        if (wi_recent_mean(S, s, st, S->sec_now - 60.0f, &m)) S->base[s][st] = (1 - a) * S->base[s][st] + a * m;
   }
   /* 기준선 다시 잡기: 청정기 꺼진 채 Air(옵션: 보류)가 rebase 초 평평 */
   D.rebased = 0;
@@ -254,6 +255,15 @@ static inline void wi_decide(wi_state_t *S, float sec) {
       }
     }
   }
+  /* 갇힘 풀기: 청정기가 켜진 채 켬 쪽 판정이 stuck_rebase 초 동안 평평하게 이어지면 기준선이 어긋난 것으로 보고
+     다시 잡는다. 실제 악취는 치우면 줄어들지만 어긋난 기준선은 세기가 일정하게 멈춘다 (11/04: |Δ| 0.38 로 15분 켜짐). */
+  if (S->P.stuck_rebase > 0 && S->purifier && want == 1) {
+    S->stuck_run++;
+    if (S->stuck_run * 9.7f >= S->P.stuck_rebase && sec - S->on_since >= S->P.min_on) {
+      float p = wi_round_ptp(S, sec - S->P.stuck_rebase);
+      if (p >= 0 && p < S->P.flat) { wi_set_baseline(S, 60.0f); S->stuck_run = 0; D.rebased = 2; }
+    }
+  } else S->stuck_run = 0;
   D.sec = sec; D.top = top; D.k = k; D.n = n; D.mag = med; D.purifier = S->purifier;
   S->last = D; S->n_decisions++;
 }

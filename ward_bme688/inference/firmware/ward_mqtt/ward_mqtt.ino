@@ -238,7 +238,7 @@ static void infer_publish_decision(const wi_decision_t &D)
   Serial.print(F(" mag=")); Serial.print(D.mag, 2);
   Serial.print(F(" purifier=")); Serial.print(D.purifier ? "ON" : "off");
   if (D.event) Serial.print(D.event == 1 ? F("  << ON") : F("  << OFF"));
-  if (D.rebased) Serial.print(F("  (기준선 다시 잡음)"));
+  if (D.rebased) Serial.print(D.rebased == 2 ? F("  (켜진 채 변화 없음 → 기준선 다시 잡음)") : F("  (기준선 다시 잡음)"));
   Serial.println();
 }
 
@@ -259,6 +259,9 @@ static void wifi_connect()
 {
   if (WiFi.status() == WL_CONNECTED) return;
   WiFi.mode(WIFI_STA);
+  /* 송신 출력을 낮춘다: 400℃ 히터 8개 + WiFi 송신 순간 전류가 겹치면 전압이 떨어져
+     Brownout 리셋이 반복됐다(11/04, USB 전원). 핫스팟이 가까우면 8.5dBm 으로 충분하다. */
+  WiFi.setTxPower(WIFI_TX_POWER);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
 }
 
@@ -394,8 +397,13 @@ void setup(void)
   mqtt.setCallback(on_mqtt);
 #endif
   mqtt.setBufferSize(MQTT_BUF);
+#if WARD_WIFI
   /* 네트워킹은 core 0 전용 태스크. 측정 루프(core 1)를 막지 않는다 */
   xTaskCreatePinnedToCore(mqtt_task, "mqtt", 16384, NULL, 1, NULL, 0);
+#else
+  WiFi.mode(WIFI_OFF);
+  Serial.println(F("# WiFi 꺼짐 (WARD_WIFI 0) — 판정은 시리얼 '# I' 줄로만"));
+#endif
 }
 
 void loop(void)

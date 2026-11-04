@@ -26,5 +26,16 @@
 #define TOPIC_MODEL     TOPIC_PREFIX "/model"
 #define TOPIC_MODEL_ACK TOPIC_PREFIX "/model/ack"
 
+// WiFi 를 쓸지. 0 이면 WiFi·MQTT 를 아예 켜지 않는다 (USB 로 쓰면서 온디바이스 판정만 시리얼로 볼 때).
+//   11/04: 방전된 배터리 + 팬 + WiFi 시작 전류가 겹쳐 Brownout 리셋이 반복 → USB 수집 때는 0 으로 빌드.
+//   arduino-cli 로는 --build-property "build.extra_flags=-DWARD_WIFI=0" 로도 바꿀 수 있다.
+#ifndef WARD_WIFI
+#define WARD_WIFI 1
+#endif
+
+// WiFi 송신 출력. 기본(19.5dBm)이면 히터와 겹쳐 Brownout 리셋이 났다 → 낮춤.
+//   그래도 리셋되면 WIFI_POWER_5dBm / 핫스팟을 더 가까이. 연결이 자주 끊기면 WIFI_POWER_11dBm.
+#define WIFI_TX_POWER WIFI_POWER_8_5dBm
+
 // HiveMQ 에서 같은 client id 로 두 대가 붙으면 서로 끊어 낸다 → device_id 로 구분.
 #define MQTT_CLIENT_ID_STR DEVICE_ID "-raw"

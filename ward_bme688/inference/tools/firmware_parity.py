@@ -75,18 +75,18 @@ int main(int argc, char **argv) {
 
 def python_log(model, csv, rebase):
     ns = argparse.Namespace(on=None, on_cycles=3, off_cycles=12, min_on=180.0, warmup=60.0, flat=0.05,
-                            base_at=None, track=0.02, rebase=rebase, rebase_weak=False, spray_lock=180.0,
+                            base_at=None, track=0.02, rebase=rebase, rebase_weak=False, spray_lock=180.0, stuck_rebase=300.0,
                             on_cmd="ON000", verbose=False)
     c = Controller(model, ns, send=False)
     with contextlib.redirect_stdout(io.StringIO()):
         for ln in csv.read_text(encoding="utf-8", errors="replace").splitlines():
             c.feed(ln.strip())
-    return [(sec, top, on) for sec, top, k, n, mag, on in c.log]
+    return [(sec, top, on, k) for sec, top, k, n, mag, on in c.log]
 
 
 def transitions(seq):
     out, prev = [], False
-    for sec, _top, on in seq:
+    for sec, _top, on, *_ in seq:
         if on != prev:
             out.append((round(sec / 60, 1), "ON" if on else "OFF"))
         prev = on
@@ -99,7 +99,7 @@ def _decisions(stdout):
         if ln.startswith("PARSE_"):
             continue
         p = ln.split(",")
-        seq.append((float(p[0]), p[1], p[5] == "1"))
+        seq.append((float(p[0]), p[1], p[5] == "1", int(p[2])))
     return seq
 
 
@@ -174,12 +174,15 @@ def run(files=None, model_path=MODEL, rebase=180.0, verbose=True):
             # 센서 8개 사이클을 묶는 방식이 파이썬(전체 기록으로 위상 계산)과 C(라운드)가 달라 판정 시각이
             # 몇 초 어긋날 수 있다 — 판정 내용이 같은지를 본다.
             j = same = n = 0
-            for sec, top, on_ in py:
+            kbad = 0
+            for sec, top, on_, kk in py:
                 while j + 1 < len(c_seq) and abs(c_seq[j + 1][0] - sec) <= abs(c_seq[j][0] - sec):
                     j += 1
                 if c_seq and abs(c_seq[j][0] - sec) <= 5:
                     n += 1
-                    same += (c_seq[j][1] == top and c_seq[j][2] == on_)
+                    ok_ = c_seq[j][1] == top and c_seq[j][2] == on_
+                    same += ok_
+                    kbad += ok_ and c_seq[j][3] != kk    # 판정은 같은데 표 수가 다름 = C 쪽 계산 버그
             tot_n += n
             tot_same += same
             tp, tc = transitions(py), transitions(c_seq)
@@ -190,7 +193,7 @@ def run(files=None, model_path=MODEL, rebase=180.0, verbose=True):
             tot_on_c += len(ons_c)
             tot_on_m += matched
             say(f"{csv.name:45s} 판정 파이썬 {len(py):4d} / C {len(c_seq):4d}  짝 {n:4d}  일치 {100*same/max(n,1):5.1f}%  "
-                f"출동 파이썬 {len(ons_p)} / C {len(ons_c)} (1분 안 일치 {matched})")
+                f"출동 파이썬 {len(ons_p)} / C {len(ons_c)} (1분 안 일치 {matched})" + (f"  ✗ 표 수 다름 {kbad}" if kbad else ""))
             if matched != len(ons_p) or len(ons_p) != len(ons_c):
                 say(f"    파이썬 {tp}\n    C      {tc}")
         say(f"\n전체: 라운드 판정 일치 {100*tot_same/max(tot_n,1):.1f}% ({tot_same}/{tot_n}) · "
