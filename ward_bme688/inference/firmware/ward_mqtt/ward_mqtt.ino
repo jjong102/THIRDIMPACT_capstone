@@ -1,0 +1,351 @@
+/**
+ * ward_mqtt.ino
+ *
+ * 와드 펌웨어 — 보드를 배터리로 돌리고, 측정값을 MQTT 로 Jetson 에 보낸다. Jetson 이 판정한다.
+ *
+ *   [이 보드] 측정 → MQTT "diffuser/ward-01/sensor" ──→ [Jetson] mqtt_capture.py → CSV
+ *                                                  → ward_controller.py (판정·청정기)
+ *                                                  → live_view.py       (그래프)
+ *
+ * 히터 설정 (8센서 모두 동일 — ward_usb 와 ward_mqtt 는 반드시 같게)
+ *   온도(℃)  {400, 400, 200, 220, 250, 280, 310, 340, 370, 400}
+ *   시간배수 {  5,   5,  25,   5,   5,   5,   5,   5,   5,   5}  x 140ms  → 한 사이클 9.8초
+ *   - 단계 0~1 400℃ : 이전 사이클 잔류물 태우기
+ *   - 단계 2   200℃ : 유일한 하강. 히터는 식는 게 느려서 길게(3.5초) 잡는다
+ *   - 단계 3~9      : 220 → 400℃ 상승. 온도마다 반응하는 물질이 달라 서로 다른 정보 7개
+ *   100℃ 같은 낮은 온도는 저항이 측정 상한(102.4MΩ)에 붙어 정보가 없어 쓰지 않는다.
+ *   ★ 이 값을 바꾸면 그때까지 모은 데이터를 쓸 수 없다 (에러 없이 판정만 망가진다).
+ *
+ * 출력
+ *   - USB 시리얼: ward_usb 와 같은 CSV (더미 포함 전체 행). USB 로 꽂으면 수집용으로도 쓸 수 있다.
+ *   - MQTT:       Gas Valid 인 행만 (더미 87% 는 보내지 않음) 약 1초마다 묶어서 보낸다.
+ *                 메시지 = CSV 행들 (줄바꿈 구분). 헤더 줄은 없다. 끊겨서 버린 줄이 있으면 "# dropped=N" 줄이 붙는다.
+ *                 끊긴 동안은 최근 약 30초 분을 보관했다가 다시 붙으면 보낸다 (그 이전은 버림).
+ *
+ * 토픽·device_id 는 config.h.
+ *   "sensor/air_quality/..." 를 피한 이유: 대시보드의 mqtt_bridge.py 가 sensor/air_quality/# 를 구독하고
+ *   "라벨 (NN%)" 형식을 기대한다. 원시 데이터를 거기 보내면 대시보드가 엉뚱한 값을 받는다.
+ *
+ * LED: 1초 점멸 = MQTT 연결됨 / 빠른 점멸(0.25초) = 아직 연결 안 됨
+ *   (ward_usb 도 1초 점멸이라 LED 만으로는 구분 안 됨 → 시리얼 부팅 문구 "# MQTT topic=" 로 확인)
+ *
+ * 준비
+ *   1. secrets.h.example 을 secrets.h 로 복사해 채움 (WiFi·HiveMQ 자격증명, git 에 안 올라감). 핫스팟은 2.4GHz.
+ *   2. 업로드 → USB 를 빼고 배터리 연결 (완충 상태로 — 방전되면 몇 분마다 리셋된다)
+ *   3. cd tools → python mqtt_capture.py   (환경변수 MQTT_BROKER / MQTT_USER / MQTT_PASS)
+ *
+ * 배터리 주의: 400℃ 단계가 3개라 전류가 크고 WiFi 송신까지 겹친다. 처음 한 번은
+ *   tools/heater_check.py 로 400℃ 실패율(≤5%)을 확인할 것. 400℃ 가 실패하면 전원 부족이다.
+ */
+
+#include "Arduino.h"
+#include "bme68xLibrary.h"
+#include "commMux.h"
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <PubSubClient.h>
+#include "secrets.h"
+#include "config.h"
+#if WARD_INFER
+#include "ward_infer.h"       /* 판정 로직 (PC 에서 tools/firmware_parity.py 로 파이썬과 비교 검증) */
+#endif
+
+#define N_KIT_SENS 8
+#define LED_PIN    LED_BUILTIN
+#define MEAS_DUR   140          /* 스텝당 측정 주기(ms) — ward_usb 와 같게 */
+#define BAUD       115200
+
+#define LINE_MAX    96          /* CSV 한 줄 최대 길이 (실제 약 70자) */
+#define QUEUE_LEN   240         /* 보관 줄 수. 유효 행 ≈ 8줄/초 → 약 30초 */
+#define PAYLOAD_MAX 3000        /* 메시지 1개 최대 바이트 */
+#define MQTT_BUF    3400        /* PubSubClient 버퍼 (기본 256 이라 반드시 키워야 함) */
+
+const char    *WIFI_SSID      = SECRET_WIFI_SSID;
+const char    *WIFI_PASS      = SECRET_WIFI_PASS;
+const char    *MQTT_BROKER    = SECRET_MQTT_BROKER;
+const uint16_t MQTT_PORT      = 8883;
+const char    *MQTT_USER      = SECRET_MQTT_USER;
+const char    *MQTT_PASS      = SECRET_MQTT_PASS;
+const char    *MQTT_TOPIC     = TOPIC_SENSOR;          /* config.h: diffuser/ward-01/sensor */
+const char    *MQTT_CLIENT_ID = MQTT_CLIENT_ID_STR;    /* config.h: ward-01-raw */
+
+Bme68x     bme[N_KIT_SENS];
+commMux    commSetup[N_KIT_SENS];
+bme68xData d;
+bool       sensorOk[N_KIT_SENS] = {false};
+
+uint32_t lastMeas = 0, lastBlink = 0;
+bool     led = false;
+
+WiFiClientSecure espClient;
+PubSubClient     mqtt(espClient);
+
+struct Line { char s[LINE_MAX]; };
+QueueHandle_t     g_q = NULL;
+volatile uint32_t g_dropped = 0;       /* 보관 공간이 차서 버린 줄 수 (누적) */
+volatile bool     g_mqtt_ok = false;
+
+/* 측정 루프(core 1) → 네트워킹 태스크(core 0). 가득 차면 가장 오래된 줄을 버린다. 절대 기다리지 않는다. */
+static void enqueue(const char *s)
+{
+  if (g_q == NULL) return;
+  Line l;
+  strncpy(l.s, s, LINE_MAX);
+  l.s[LINE_MAX - 1] = '\0';
+  if (xQueueSend(g_q, &l, 0) != pdTRUE) {
+    Line junk;
+    xQueueReceive(g_q, &junk, 0);
+    g_dropped++;
+    xQueueSend(g_q, &l, 0);
+  }
+}
+
+#if WARD_INFER
+/* ---------- 온디바이스 판정 ---------- */
+#define INFER_MSG_MAX 288
+struct InferMsg { char s[INFER_MSG_MAX]; };
+QueueHandle_t g_iq = NULL;             /* 판정 JSON → 네트워킹 태스크. 최근 것만 의미 있어 짧게 */
+static wi_state_t g_wi;
+static uint32_t   g_lastWarmMsg = 0;
+
+/* 상태 이름 (대시보드용): 기준선 전 WARMUP / Air CLEAN / 우리 향 SCENT / 악취 MALODOR / Unknown / 보류 HOLD */
+static const char *infer_state(int top)
+{
+  if (top == WI_AIR) return "CLEAN";
+  if (top == WI_WEAK || top == WI_NONE) return "HOLD";
+  if (top == WI_UNKNOWN) return "UNKNOWN";
+  return WI_CLASSES[top].on ? "MALODOR" : "SCENT";
+}
+
+static void infer_push(const char *json)
+{
+  if (g_iq == NULL) return;
+  InferMsg m;
+  strncpy(m.s, json, INFER_MSG_MAX);
+  m.s[INFER_MSG_MAX - 1] = '\0';
+  if (xQueueSend(g_iq, &m, 0) != pdTRUE) {          /* 가득 차면 가장 오래된 것을 버림 */
+    InferMsg junk;
+    xQueueReceive(g_iq, &junk, 0);
+    xQueueSend(g_iq, &m, 0);
+  }
+}
+
+static void infer_publish_decision(const wi_decision_t &D)
+{
+  char js[INFER_MSG_MAX];
+  const char *st = infer_state(D.top);
+  bool scent = (D.top >= 0 && !WI_CLASSES[D.top].on);
+  snprintf(js, sizeof(js),
+           "{\"device_id\":\"%s\",\"src\":\"ward\",\"model\":\"%s\",\"uptime_s\":%lu,"
+           "\"state\":\"%s\",\"label\":\"%s\",\"label_note\":\"%s\",\"mag\":%.3f,"
+           "\"votes\":%d,\"n\":%d,\"purifier\":\"%s\",\"event\":\"%s\","
+           "\"alert\":{\"malodor\":%s},\"baseline_age_s\":%.0f}",
+           DEVICE_ID, WI_MODEL_ID, (unsigned long)(millis() / 1000),
+           st, wi_label_name(D.top), scent ? "추정" : "", isfinite(D.mag) ? D.mag : -1.0f,
+           D.k, D.n, D.purifier ? "on" : "off",
+           D.event == 1 ? "ON" : (D.event == 2 ? "OFF" : ""),
+           (D.purifier && (D.top == WI_UNKNOWN || (D.top >= 0 && WI_CLASSES[D.top].on))) ? "true" : "false",
+           g_wi.sec_now - g_wi.base_sec);
+  infer_push(js);
+  /* 시리얼에도 한 줄 ('#' 로 시작해서 capture_serial.py 의 CSV 에는 안 섞임) */
+  Serial.print(F("# I ")); Serial.print(D.sec, 1); Serial.print(' ');
+  Serial.print(st); Serial.print(' '); Serial.print(wi_label_name(D.top));
+  Serial.print(' '); Serial.print(D.k); Serial.print('/'); Serial.print(D.n);
+  Serial.print(F(" mag=")); Serial.print(D.mag, 2);
+  Serial.print(F(" purifier=")); Serial.print(D.purifier ? "ON" : "off");
+  if (D.event) Serial.print(D.event == 1 ? F("  << ON") : F("  << OFF"));
+  if (D.rebased) Serial.print(F("  (기준선 다시 잡음)"));
+  Serial.println();
+}
+
+static void infer_warmup_tick()
+{
+  if (g_wi.has_base || millis() - g_lastWarmMsg < 10000) return;
+  g_lastWarmMsg = millis();
+  char js[160];
+  snprintf(js, sizeof(js),
+           "{\"device_id\":\"%s\",\"src\":\"ward\",\"model\":\"%s\",\"uptime_s\":%lu,\"state\":\"WARMUP\"}",
+           DEVICE_ID, WI_MODEL_ID, (unsigned long)(millis() / 1000));
+  infer_push(js);
+}
+#endif
+
+/* ---------- 네트워킹 (core 0 전용 태스크) ---------- */
+static void wifi_connect()
+{
+  if (WiFi.status() == WL_CONNECTED) return;
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+}
+
+static void mqtt_connect()
+{
+  if (mqtt.connected()) return;
+  if (WiFi.status() != WL_CONNECTED) return;
+  espClient.setInsecure();               /* 서버 인증서 검증 생략 (데모 펌웨어와 동일) */
+  espClient.setTimeout(5);
+  mqtt.setServer(MQTT_BROKER, MQTT_PORT);
+  mqtt.setKeepAlive(60);
+  mqtt.setSocketTimeout(5);
+  mqtt.connect(MQTT_CLIENT_ID, MQTT_USER, MQTT_PASS);
+}
+
+static void mqtt_task(void *arg)
+{
+  (void)arg;
+  static char payload[PAYLOAD_MAX + LINE_MAX + 64];
+  bool wasConnected = false;
+  uint32_t reportedDrop = 0;
+  for (;;) {
+    bool now = mqtt.connected();
+    g_mqtt_ok = now;
+    if (now && !wasConnected) {
+      Serial.print(F("# MQTT 연결됨 → 발행 시작 (topic="));
+      Serial.print(MQTT_TOPIC); Serial.println(F(")"));
+    } else if (!now && wasConnected) {
+      Serial.println(F("# MQTT 끊김 → 재접속 시도"));
+    }
+    wasConnected = now;
+
+    if (WiFi.status() != WL_CONNECTED)      wifi_connect();
+    else if (!now)                          mqtt_connect();
+    else {
+      mqtt.loop();
+      /* 밀린 게 있으면 한 번에 최대 4개 메시지까지 보내 따라잡는다 */
+      for (int b = 0; b < 4 && uxQueueMessagesWaiting(g_q) > 0; b++) {
+        size_t n = 0;
+        uint32_t dr = g_dropped;
+        if (dr != reportedDrop) {
+          n += snprintf(payload + n, sizeof(payload) - n, "# dropped=%lu\n", (unsigned long)dr);
+          reportedDrop = dr;
+        }
+        Line l;
+        while (n < PAYLOAD_MAX && xQueueReceive(g_q, &l, 0) == pdTRUE) {
+          size_t k = strlen(l.s);
+          memcpy(payload + n, l.s, k);
+          n += k;
+          payload[n++] = '\n';
+        }
+        payload[n] = '\0';
+        if (!mqtt.publish(MQTT_TOPIC, (const uint8_t *)payload, n, false)) {
+          Serial.println(F("# MQTT 발행 실패 (이 묶음은 버림)"));
+          break;
+        }
+      }
+#if WARD_INFER
+      InferMsg m;
+      while (g_iq != NULL && xQueueReceive(g_iq, &m, 0) == pdTRUE)
+        mqtt.publish(TOPIC_INFER, m.s, false);
+#endif
+    }
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+}
+
+/* ---------- 측정 ---------- */
+void setup(void)
+{
+  Serial.begin(BAUD);
+  pinMode(LED_PIN, OUTPUT);
+  commMuxBegin(Wire, SPI);
+  delay(200);
+
+  uint8_t ok = 0;
+  for (uint8_t i = 0; i < N_KIT_SENS; i++) {
+    commSetup[i] = commMuxSetConfig(Wire, SPI, i, commSetup[i]);
+    bme[i].begin(BME68X_SPI_INTF, commMuxRead, commMuxWrite, commMuxDelay,
+                 &commSetup[i]);
+    if (bme[i].checkStatus()) {
+      Serial.print(F("# WARN sensor ")); Serial.print(i);
+      Serial.print(F(" init fail: ")); Serial.println(bme[i].statusString());
+      sensorOk[i] = false;
+      continue;
+    }
+    /* 히터 설정 (모든 센서 동일) — ward_usb 와 반드시 같게 */
+    bme[i].setTPH();
+    uint16_t tempProf[10] = {400, 400, 200, 220, 250, 280, 310, 340, 370, 400};
+    uint16_t mulProf[10]  = {  5,   5,  25,   5,   5,   5,   5,   5,   5,   5};
+    uint16_t sharedHeatrDur =
+        MEAS_DUR - (bme[i].getMeasDur(BME68X_PARALLEL_MODE) / INT64_C(1000));
+    bme[i].setHeaterProf(tempProf, mulProf, sharedHeatrDur, 10);
+    bme[i].setOpMode(BME68X_PARALLEL_MODE);
+    sensorOk[i] = true;
+    ok++;
+  }
+
+  if (ok == 0) {
+    Serial.println(F("# ERROR: no working sensor. check wiring."));
+    while (1) { digitalWrite(LED_PIN, HIGH); delay(150);
+                digitalWrite(LED_PIN, LOW);  delay(150); }
+  }
+  Serial.print(F("# sensors ready ")); Serial.print(ok); Serial.println(F("/8"));
+  Serial.print(F("# heater {400,400,200,220,250,280,310,340,370,400}"
+                 " mul{5,5,25,5,5,5,5,5,5,5} cycle=9.8s  MEAS_DUR="));
+  Serial.println(MEAS_DUR);
+  Serial.print(F("# MQTT topic=")); Serial.println(MQTT_TOPIC);
+  Serial.println(F("TimeStamp(ms),Sensor Index,Temperature(deg C),Pressure(Pa),"
+                   "Humidity(%),Gas Resistance(ohm),Gas Index,Meas Index,IDAC,"
+                   "Status,Gas Valid,Heater Stable"));
+
+  g_q = xQueueCreate(QUEUE_LEN, sizeof(Line));
+  if (g_q == NULL) Serial.println(F("# WARN: 큐 생성 실패 → MQTT 전송 안 함"));
+#if WARD_INFER
+  wi_init(&g_wi, wi_default_params());
+  g_iq = xQueueCreate(6, sizeof(InferMsg));
+  Serial.print(F("# infer on  model=")); Serial.print(WI_MODEL_ID);
+  Serial.print(F("  classes="));
+  for (int c = 0; c < WI_N_CLASSES; c++) {
+    Serial.print(WI_CLASSES[c].name); Serial.print(WI_CLASSES[c].on ? "(on) " : " ");
+  }
+  Serial.print(F(" topic=")); Serial.println(TOPIC_INFER);
+#endif
+  mqtt.setBufferSize(MQTT_BUF);
+  /* 네트워킹은 core 0 전용 태스크. 측정 루프(core 1)를 막지 않는다 */
+  xTaskCreatePinnedToCore(mqtt_task, "mqtt", 16384, NULL, 1, NULL, 0);
+}
+
+void loop(void)
+{
+  /* LED: 연결되면 1초 점멸, 아니면 빠른 점멸 */
+  uint32_t blinkMs = g_mqtt_ok ? 1000 : 250;
+  if (millis() - lastBlink >= blinkMs) {
+    lastBlink = millis();
+    led = !led;
+    digitalWrite(LED_PIN, led);
+  }
+
+  if (millis() - lastMeas < MEAS_DUR) return;
+  lastMeas = millis();
+
+  uint8_t nLeft = 0;
+  char line[LINE_MAX];
+  for (uint8_t i = 0; i < N_KIT_SENS; i++) {
+    if (!sensorOk[i]) continue;
+    if (!bme[i].fetchData()) continue;
+
+    do {
+      nLeft = bme[i].getData(d);
+      if (!(d.status & BME68X_NEW_DATA_MSK)) continue;
+
+      /* ward_usb 와 같은 형식 (Serial.print(float) 가 소수 둘째 자리라 %.2f) */
+      snprintf(line, sizeof(line), "%lu,%u,%.2f,%.2f,%.2f,%.2f,%u,%u,%u,%X,%u,%u",
+               (unsigned long)millis(), (unsigned)i,
+               d.temperature, d.pressure, d.humidity, d.gas_resistance,
+               (unsigned)d.gas_index, (unsigned)d.meas_index, (unsigned)d.idac,
+               (unsigned)d.status,
+               (unsigned)(d.status & BME68X_GASM_VALID_MSK),
+               (unsigned)(d.status & BME68X_HEAT_STAB_MSK));
+      Serial.println(line);
+      if (d.status & BME68X_GASM_VALID_MSK) enqueue(line);   /* 더미는 보내지 않음 */
+#if WARD_INFER
+      if (wi_feed(&g_wi, (double)millis(), i, d.gas_resistance, d.gas_index,
+                  (d.status & BME68X_GASM_VALID_MSK) ? 1 : 0))
+        infer_publish_decision(g_wi.last);
+#endif
+
+    } while (nLeft);
+  }
+#if WARD_INFER
+  infer_warmup_tick();
+#endif
+}
