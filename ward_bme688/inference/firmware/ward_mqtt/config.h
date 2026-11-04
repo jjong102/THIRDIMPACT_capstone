@@ -20,5 +20,11 @@
 #define WARD_INFER  1
 #define TOPIC_INFER TOPIC_PREFIX "/inference_ward"
 
+// 무선 모델 교체 (tools/push_model.py). 와드는 TOPIC_MODEL 을 구독하고, 받은 모델을 검사해
+//   통과하면 내부 저장소(NVS)에 저장·적용한 뒤 TOPIC_MODEL_ACK 로 결과를 답한다. 재부팅해도 유지.
+//   "WARDMODEL RESET" 을 받으면 저장된 모델을 지우고 펌웨어 기본 모델(model.h)로 돌아간다.
+#define TOPIC_MODEL     TOPIC_PREFIX "/model"
+#define TOPIC_MODEL_ACK TOPIC_PREFIX "/model/ack"
+
 // HiveMQ 에서 같은 client id 로 두 대가 붙으면 서로 끊어 낸다 → device_id 로 구분.
 #define MQTT_CLIENT_ID_STR DEVICE_ID "-raw"

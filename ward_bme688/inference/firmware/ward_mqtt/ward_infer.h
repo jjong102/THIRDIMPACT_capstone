@@ -13,28 +13,53 @@
  *                               ▼
  *        표결 → 켬/끔 쪽 연속 카운트 → 청정기 권고(ON/OFF) · 기준선 추종 · 평평하면 다시 잡기
  *
- * 모델(model.h, tools/export_model.py 가 만듦): 클래스마다 평균 방향 10개 + 허용 각도, 문턱 2개.
+ * 모델: wi_model_t (클래스마다 평균 방향 10개 + 허용 각도, 문턱 2개).
+ *   - 기본값은 model.h 의 WI_DEFAULT_MODEL (tools/export_model.py 가 만듦, 펌웨어에 고정)
+ *   - 실행 중 교체: wi_model_parse() 로 글자 형식 모델을 읽어 S->M 에 넣는다
+ *     (와드는 MQTT diffuser/<id>/model 로 받는다 — tools/push_model.py)
+ *
+ * 글자 형식 (줄 단위, 마지막 crc 줄은 그 앞 전부의 CRC-32 = zlib.crc32):
+ *   WARDMODEL 1
+ *   id 9845bdd19c
+ *   tau 0.2280907 0.3
+ *   class Lavender 0 44.0206 -0.06583 -0.06137 ... (10개)
+ *   ...
+ *   end
+ *   crc 1a2b3c4d
  */
 #pragma once
 #include <math.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
-#define WI_NS     8      /* 센서 수 (DevKit) */
-#define WI_STEPS  10     /* 히터 단계 수 */
-#define WI_HIST   24     /* (센서, 단계)마다 기억할 최근 값 수 — 사이클당 1개, 약 4분 */
-#define WI_ROUNDS 64     /* 평평한지 볼 라운드 기록 수 — 약 10분 */
+#define WI_NS          8     /* 센서 수 (DevKit) */
+#define WI_STEPS       10    /* 히터 단계 수 */
+#define WI_HIST        24    /* (센서, 단계)마다 기억할 최근 값 수 — 사이클당 1개, 약 4분 */
+#define WI_ROUNDS      64    /* 평평한지 볼 라운드 기록 수 — 약 10분 */
+#define WI_MAX_CLASSES 8
+#define WI_NAME_LEN    16
+#define WI_ID_LEN      16
+#define WI_MODEL_TEXT_MAX 2048
 
 typedef struct {
-  const char *name;
-  uint8_t     on;                 /* 1 = 악취(출동) */
-  float       angle_thr;          /* 허용 각도(도) */
-  float       mu[WI_STEPS];       /* 평균 방향(단위벡터) */
+  char    name[WI_NAME_LEN];
+  uint8_t on;                     /* 1 = 악취(출동) */
+  float   angle_thr;              /* 허용 각도(도) */
+  float   mu[WI_STEPS];           /* 평균 방향(단위벡터) */
 } wi_class_t;
 
-#include "model.h"
+typedef struct {
+  char       id[WI_ID_LEN];
+  float      tau_air;             /* 이보다 작으면 Air */
+  float      tau_decide;          /* 이보다 작으면 보류(Weak) */
+  int        n;                   /* 클래스 수 */
+  wi_class_t c[WI_MAX_CLASSES];
+} wi_model_t;
 
-/* 판정 라벨: 0..N-1 = 클래스, 음수 = 특수 */
+#include "model.h"                /* static const wi_model_t WI_DEFAULT_MODEL */
+
+/* 판정 라벨: 0..n-1 = 클래스, 음수 = 특수 */
 enum { WI_AIR = -1, WI_WEAK = -2, WI_UNKNOWN = -3, WI_NONE = -4 };
 
 typedef struct {                  /* ward_controller.py 기본값과 같음 */
@@ -66,6 +91,7 @@ typedef struct {                  /* 한 번의 판정(라운드) 결과 */
 
 typedef struct {
   wi_params_t P;
+  wi_model_t  M;                  /* 지금 쓰는 모델 */
   /* 시간 */
   int    have_t0; double t0, last_t; float sec_now; int resets;
   /* 사이클 조립 */
@@ -89,8 +115,8 @@ typedef struct {
 } wi_state_t;
 
 /* ---------------------------------------------------------------- 도우미 */
-static inline const char *wi_label_name(int lab) {
-  if (lab >= 0 && lab < WI_N_CLASSES) return WI_CLASSES[lab].name;
+static inline const char *wi_label_name(const wi_state_t *S, int lab) {
+  if (lab >= 0 && lab < S->M.n) return S->M.c[lab].name;
   switch (lab) { case WI_AIR: return "Air"; case WI_WEAK: return "Weak";
                  case WI_UNKNOWN: return "Unknown"; default: return "-"; }
 }
@@ -142,40 +168,41 @@ static inline void wi_set_baseline(wi_state_t *S, float win) {
 }
 
 /* ---------------------------------------------------------------- 판정 */
-static inline int wi_predict(const float *d, float *mag_out) {
+static inline int wi_predict(const wi_model_t *M, const float *d, float *mag_out) {
   int k, c, best = -1; float n = 0, bang = 1e9f;
   for (k = 0; k < WI_STEPS; k++) { if (!isfinite(d[k])) { *mag_out = NAN; return WI_NONE; } n += d[k] * d[k]; }
   n = sqrtf(n); *mag_out = n;
-  if (n < WI_TAU_AIR) return WI_AIR;
-  if (n < WI_TAU_DECIDE) return WI_WEAK;
-  for (c = 0; c < WI_N_CLASSES; c++) {
+  if (n < M->tau_air) return WI_AIR;
+  if (n < M->tau_decide) return WI_WEAK;
+  for (c = 0; c < M->n; c++) {
     float dot = 0, a;
-    for (k = 0; k < WI_STEPS; k++) dot += (d[k] / n) * WI_CLASSES[c].mu[k];
+    for (k = 0; k < WI_STEPS; k++) dot += (d[k] / n) * M->c[c].mu[k];
     if (dot > 1) dot = 1;
     if (dot < -1) dot = -1;
     a = acosf(dot) * 57.29577951f;
     if (a < bang) { bang = a; best = c; }
   }
   if (best < 0) return WI_UNKNOWN;
-  return bang <= WI_CLASSES[best].angle_thr ? best : WI_UNKNOWN;
+  return bang <= M->c[best].angle_thr ? best : WI_UNKNOWN;
 }
 
-static inline int wi_is_on(int lab) { return lab == WI_UNKNOWN || (lab >= 0 && WI_CLASSES[lab].on); }
+static inline int wi_is_on(const wi_model_t *M, int lab) { return lab == WI_UNKNOWN || (lab >= 0 && M->c[lab].on); }
+static inline int wi_is_off_class(const wi_model_t *M, int lab) { return lab >= 0 && !M->c[lab].on; }
 
 /* open_set.vote: 과반이면 그 라벨, 아니면 '끔' 쪽 향(Air 제외)이 합쳐 과반이면 그중 최다, 아니면 Unknown.
    동률은 먼저 나온 라벨 (파이썬 Counter.most_common 과 같음) */
-static inline int wi_vote(const int *labs, int n, int *k_out) {
+static inline int wi_vote(const wi_model_t *M, const int *labs, int n, int *k_out) {
   int i, j, top = WI_NONE, topc = 0, off = 0, offtop = WI_NONE, offc = 0;
+  if (!n) { *k_out = 0; return WI_NONE; }
   for (i = 0; i < n; i++) {
     int c = 0; for (j = 0; j < n; j++) if (labs[j] == labs[i]) c++;
     if (c > topc) { topc = c; top = labs[i]; }
   }
-  if (!n) { *k_out = 0; return WI_NONE; }
   if (topc * 2 > n) { *k_out = topc; return top; }
-  for (i = 0; i < n; i++) if (labs[i] >= 0 && !WI_CLASSES[labs[i]].on) off++;
+  for (i = 0; i < n; i++) if (wi_is_off_class(M, labs[i])) off++;
   if (off * 2 > n) {
     for (i = 0; i < n; i++) {
-      int c = 0; if (!(labs[i] >= 0 && !WI_CLASSES[labs[i]].on)) continue;
+      int c = 0; if (!wi_is_off_class(M, labs[i])) continue;
       for (j = 0; j < n; j++) if (labs[j] == labs[i]) c++;
       if (c > offc) { offc = c; offtop = labs[i]; }
     }
@@ -198,8 +225,8 @@ static inline void wi_decide(wi_state_t *S, float sec) {
   }
   S->pred_n = 0; S->pred_flag = 0;
   med = wi_median(mags, n);
-  top = wi_vote(labs, n, &k);
-  want = (top == WI_WEAK || top == WI_NONE) ? -1 : wi_is_on(top);
+  top = wi_vote(&S->M, labs, n, &k);
+  want = (top == WI_WEAK || top == WI_NONE) ? -1 : wi_is_on(&S->M, top);
   if (want == 1 && top == WI_UNKNOWN && sec < S->lock_until) want = -1;
   S->air_run = (top == WI_AIR) ? S->air_run + 1 : 0;
   if (want == 1) { S->run_on++; S->run_off = 0; }
@@ -208,7 +235,7 @@ static inline void wi_decide(wi_state_t *S, float sec) {
   if (!S->purifier && S->run_on >= S->P.on_cycles) { S->purifier = 1; S->on_since = sec; D.event = 1; }
   else if (S->purifier && S->run_off >= S->P.off_cycles && sec - S->on_since >= S->P.min_on) { S->purifier = 0; D.event = 2; }
   /* 기준선 추종: Air 가 6사이클 이상, 변화량이 문턱 절반 아래일 때만 아주 조금 */
-  if (S->air_run >= 6 && med <= WI_TAU_AIR / 2) {
+  if (S->air_run >= 6 && med <= S->M.tau_air / 2) {
     int s; float m, a = S->P.track;
     for (s = 0; s < WI_NS; s++) for (k = 0; k < WI_STEPS; k++)
       if ((S->base_ok[s] >> k) & 1u)
@@ -234,6 +261,7 @@ static inline void wi_decide(wi_state_t *S, float sec) {
 /* ---------------------------------------------------------------- 입력 */
 static inline void wi_init(wi_state_t *S, wi_params_t P) {
   int s; memset(S, 0, sizeof(*S)); S->P = P; S->lock_until = -1.0f;
+  S->M = WI_DEFAULT_MODEL;
   for (s = 0; s < WI_NS; s++) S->prev_k[s] = -1;
 }
 
@@ -261,7 +289,7 @@ static inline int wi_on_cycle(wi_state_t *S, int s, float t, const float *x) {
   {
     float d[WI_STEPS], mag; int lab;
     for (k = 0; k < WI_STEPS; k++) d[k] = x[k] - S->base[s][k];
-    lab = wi_predict(d, &mag);
+    lab = wi_predict(&S->M, d, &mag);
     if (!((S->pred_flag >> s) & 1u)) { S->pred_ord[S->pred_n++] = (int8_t)s; S->pred_flag |= (uint8_t)(1u << s); }
     S->pred_lab[s] = lab; S->pred_mag[s] = mag;
     if (S->pred_n >= wi_count_bits(S->seen)) { wi_decide(S, t); decided = 1; }
@@ -269,10 +297,16 @@ static inline int wi_on_cycle(wi_state_t *S, int s, float t, const float *x) {
   return decided;
 }
 
+static inline void wi_hist_push(wi_state_t *S, int s, int k, float sec, float x) {
+  uint8_t *hi = &S->hi[s][k];
+  S->hx[s][k][*hi] = x; S->ht[s][k][*hi] = sec; *hi = (uint8_t)((*hi + 1) % WI_HIST);
+  if (S->hn[s][k] < WI_HIST) S->hn[s][k]++;
+}
+
 /* 측정 행 1개. t_ms = 보드 millis, gas_ohm = 가스저항, k = Gas Index, valid = Gas Valid 비트.
    판정이 하나 나오면 1 을 돌려주고 S->last 에 결과가 있다. */
 static inline int wi_feed(wi_state_t *S, double t_ms, int s, float gas_ohm, int k, int valid) {
-  float sec, x; int decided = 0;
+  float sec, x;
   if (s < 0 || s >= WI_NS) return 0;
   if (!S->have_t0) { S->t0 = t_ms; S->have_t0 = 1; }
   else if (t_ms < S->last_t - 1000) {          /* 보드 리셋: 시간이 0 부터 다시 */
@@ -290,13 +324,100 @@ static inline int wi_feed(wi_state_t *S, double t_ms, int s, float gas_ohm, int 
     if (done) memcpy(cx, S->steps[s], sizeof(cx));
     S->got[s] = 0; S->tsum[s] = 0; S->tcnt[s] = 0;
     S->prev_k[s] = k; S->steps[s][k] = x; S->got[s] |= (uint16_t)(1u << k); S->tsum[s] += sec; S->tcnt[s]++;
-    { uint8_t *hi = &S->hi[s][k]; S->hx[s][k][*hi] = x; S->ht[s][k][*hi] = sec; *hi = (uint8_t)((*hi + 1) % WI_HIST);
-      if (S->hn[s][k] < WI_HIST) S->hn[s][k]++; }
-    if (done) decided = wi_on_cycle(S, s, ct, cx);
-    return decided;
+    wi_hist_push(S, s, k, sec, x);
+    return done ? wi_on_cycle(S, s, ct, cx) : 0;
   }
   S->prev_k[s] = k; S->steps[s][k] = x; S->got[s] |= (uint16_t)(1u << k); S->tsum[s] += sec; S->tcnt[s]++;
-  { uint8_t *hi = &S->hi[s][k]; S->hx[s][k][*hi] = x; S->ht[s][k][*hi] = sec; *hi = (uint8_t)((*hi + 1) % WI_HIST);
-    if (S->hn[s][k] < WI_HIST) S->hn[s][k]++; }
+  wi_hist_push(S, s, k, sec, x);
   return 0;
+}
+
+/* ---------------------------------------------------------------- 모델 교체 (글자 형식) */
+static inline uint32_t wi_crc32(const char *p, size_t n) {   /* zlib.crc32 과 같음 */
+  uint32_t c = 0xFFFFFFFFu; size_t i; int b;
+  for (i = 0; i < n; i++) {
+    c ^= (uint8_t)p[i];
+    for (b = 0; b < 8; b++) c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1u)));
+  }
+  return ~c;
+}
+
+static inline void wi_set_err(char *err, size_t errlen, const char *msg) {
+  if (err && errlen) { strncpy(err, msg, errlen - 1); err[errlen - 1] = '\0'; }
+}
+
+/* 한 줄을 공백으로 나눈다 (최대 maxtok). 줄은 수정된다. */
+static inline int wi_split(char *line, char **tok, int maxtok) {
+  int n = 0; char *p = line;
+  while (*p && n < maxtok) {
+    while (*p == ' ' || *p == '\t' || *p == '\r') p++;
+    if (!*p) break;
+    tok[n++] = p;
+    while (*p && *p != ' ' && *p != '\t' && *p != '\r') p++;
+    if (*p) *p++ = '\0';
+  }
+  return n;
+}
+
+static inline int wi_parse_float(const char *s, float *out) {
+  char *end; double v = strtod(s, &end);
+  if (end == s || *end != '\0' || !isfinite(v)) return 0;
+  *out = (float)v; return 1;
+}
+
+/* 글자 형식 모델 → out. 성공 1 / 실패 0 (err 에 이유). out 은 성공했을 때만 바뀐다. */
+static inline int wi_model_parse(const char *txt, size_t len, wi_model_t *out, char *err, size_t errlen) {
+  static char buf[WI_MODEL_TEXT_MAX + 1];
+  wi_model_t M; const char *crcp; size_t body; unsigned long want; char *line, *next, *tok[16];
+  int ntok, ver_ok = 0, tau_ok = 0, end_ok = 0, i, k;
+  if (len == 0 || len > WI_MODEL_TEXT_MAX) { wi_set_err(err, errlen, "size"); return 0; }
+  memcpy(buf, txt, len); buf[len] = '\0';
+  /* CRC: 마지막 "crc " 줄 앞까지 */
+  crcp = NULL;
+  for (i = (int)len - 4; i >= 0; i--) if ((i == 0 || buf[i - 1] == '\n') && strncmp(buf + i, "crc ", 4) == 0) { crcp = buf + i; break; }
+  if (!crcp) { wi_set_err(err, errlen, "no crc"); return 0; }
+  body = (size_t)(crcp - buf);
+  want = strtoul(crcp + 4, NULL, 16);
+  if (wi_crc32(buf, body) != (uint32_t)want) { wi_set_err(err, errlen, "crc mismatch"); return 0; }
+  buf[body] = '\0';
+  memset(&M, 0, sizeof(M));
+  for (line = buf; line && *line; line = next) {
+    next = strchr(line, '\n'); if (next) *next++ = '\0';
+    ntok = wi_split(line, tok, 16);
+    if (ntok == 0) continue;
+    if (strcmp(tok[0], "WARDMODEL") == 0) { if (ntok != 2 || strcmp(tok[1], "1") != 0) { wi_set_err(err, errlen, "version"); return 0; } ver_ok = 1; }
+    else if (strcmp(tok[0], "id") == 0) {
+      if (ntok != 2 || strlen(tok[1]) == 0 || strlen(tok[1]) >= WI_ID_LEN) { wi_set_err(err, errlen, "id"); return 0; }
+      strcpy(M.id, tok[1]);
+    }
+    else if (strcmp(tok[0], "tau") == 0) {
+      if (ntok != 3 || !wi_parse_float(tok[1], &M.tau_air) || !wi_parse_float(tok[2], &M.tau_decide)) { wi_set_err(err, errlen, "tau"); return 0; }
+      if (!(M.tau_air > 0 && M.tau_air < 5 && M.tau_decide >= M.tau_air && M.tau_decide < 5)) { wi_set_err(err, errlen, "tau range"); return 0; }
+      tau_ok = 1;
+    }
+    else if (strcmp(tok[0], "class") == 0) {
+      wi_class_t *C; float norm = 0;
+      if (ntok != 4 + WI_STEPS) { wi_set_err(err, errlen, "class fields"); return 0; }
+      if (M.n >= WI_MAX_CLASSES) { wi_set_err(err, errlen, "too many classes"); return 0; }
+      C = &M.c[M.n];
+      if (strlen(tok[1]) == 0 || strlen(tok[1]) >= WI_NAME_LEN) { wi_set_err(err, errlen, "class name"); return 0; }
+      strcpy(C->name, tok[1]);
+      if (strcmp(tok[2], "0") != 0 && strcmp(tok[2], "1") != 0) { wi_set_err(err, errlen, "class on"); return 0; }
+      C->on = (uint8_t)(tok[2][0] - '0');
+      if (!wi_parse_float(tok[3], &C->angle_thr) || !(C->angle_thr > 0 && C->angle_thr <= 180)) { wi_set_err(err, errlen, "angle"); return 0; }
+      for (k = 0; k < WI_STEPS; k++) {
+        if (!wi_parse_float(tok[4 + k], &C->mu[k])) { wi_set_err(err, errlen, "mu"); return 0; }
+        norm += C->mu[k] * C->mu[k];
+      }
+      if (fabsf(sqrtf(norm) - 1.0f) > 0.02f) { wi_set_err(err, errlen, "mu not unit"); return 0; }
+      M.n++;
+    }
+    else if (strcmp(tok[0], "end") == 0) end_ok = 1;
+    else { wi_set_err(err, errlen, "unknown line"); return 0; }
+  }
+  if (!ver_ok || !tau_ok || !end_ok || M.id[0] == '\0') { wi_set_err(err, errlen, "missing field"); return 0; }
+  if (M.n < 1) { wi_set_err(err, errlen, "no class"); return 0; }
+  *out = M;
+  wi_set_err(err, errlen, "ok");
+  return 1;
 }

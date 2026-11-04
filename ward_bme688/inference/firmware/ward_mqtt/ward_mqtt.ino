@@ -47,6 +47,7 @@
 #include "secrets.h"
 #include "config.h"
 #if WARD_INFER
+#include <Preferences.h>      /* 무선으로 받은 모델을 내부 저장소(NVS)에 보관 */
 #include "ward_infer.h"       /* 판정 로직 (PC 에서 tools/firmware_parity.py 로 파이썬과 비교 검증) */
 #endif
 
@@ -108,13 +109,96 @@ QueueHandle_t g_iq = NULL;             /* 판정 JSON → 네트워킹 태스크
 static wi_state_t g_wi;
 static uint32_t   g_lastWarmMsg = 0;
 
+/* ---- 무선 모델 교체 ----
+ * MQTT 콜백(core 0)은 받은 글자만 복사해 두고, 검사·적용은 측정 루프(core 1)의 model_poll() 에서 한다.
+ * 판정 상태(g_wi)를 한 코어에서만 만지기 위해서다. */
+static Preferences   g_prefs;
+static char          g_model_rx[WI_MODEL_TEXT_MAX + 1];
+static volatile size_t g_model_rx_len = 0;
+static volatile bool g_model_pending = false;
+static const char   *g_model_src = "default";       /* default(model.h) / nvs / mqtt */
+#define ACK_MAX 200
+struct AckMsg { char s[ACK_MAX]; };
+QueueHandle_t g_aq = NULL;                           /* 모델 교체 결과 → 네트워킹 태스크 */
+
+static void model_ack(const char *result, const char *msg)
+{
+  if (g_aq == NULL) return;
+  AckMsg a;
+  snprintf(a.s, sizeof(a.s),
+           "{\"device_id\":\"%s\",\"result\":\"%s\",\"model\":\"%s\",\"src\":\"%s\",\"msg\":\"%s\",\"uptime_s\":%lu}",
+           DEVICE_ID, result, g_wi.M.id, g_model_src, msg, (unsigned long)(millis() / 1000));
+  xQueueSend(g_aq, &a, 0);
+  Serial.print(F("# model ")); Serial.print(result); Serial.print(F(" id=")); Serial.print(g_wi.M.id);
+  Serial.print(F(" src=")); Serial.print(g_model_src); Serial.print(' '); Serial.println(msg);
+}
+
+/* core 0: PubSubClient 콜백 — 복사만 */
+static void on_mqtt(char *topic, byte *payload, unsigned int len)
+{
+  if (strcmp(topic, TOPIC_MODEL) != 0) return;
+  if (len == 0 || g_model_pending) return;           /* 빈 메시지 = retained 지움 / 처리 중이면 다음에 */
+  if (len > WI_MODEL_TEXT_MAX) len = WI_MODEL_TEXT_MAX + 1;   /* 너무 길면 검사에서 size 로 거절 */
+  size_t n = len > WI_MODEL_TEXT_MAX ? WI_MODEL_TEXT_MAX : len;
+  memcpy(g_model_rx, payload, n);
+  g_model_rx[n] = '\0';
+  g_model_rx_len = len;
+  g_model_pending = true;
+}
+
+static void model_apply(const wi_model_t &M, const char *src)
+{
+  g_wi.M = M;
+  g_wi.pred_n = 0; g_wi.pred_flag = 0;               /* 이전 모델로 낸 이번 라운드 판정은 버림 */
+  g_model_src = src;
+}
+
+/* core 1: 받은 모델 검사 → 적용 → 저장 → 답장 */
+static void model_poll()
+{
+  if (!g_model_pending) return;
+  size_t len = g_model_rx_len;
+  if (len >= 15 && strncmp(g_model_rx, "WARDMODEL RESET", 15) == 0) {
+    g_prefs.remove("model");
+    model_apply(WI_DEFAULT_MODEL, "default");
+    model_ack("reset", "기본 모델로 돌아감");
+  } else {
+    wi_model_t M; char err[40];
+    if (!wi_model_parse(g_model_rx, len, &M, err, sizeof(err))) {
+      model_ack("error", err);                       /* 지금 모델은 그대로 */
+    } else if (strcmp(M.id, g_wi.M.id) == 0) {
+      model_ack("same", "이미 쓰는 모델");
+    } else {
+      model_apply(M, "mqtt");
+      size_t w = g_prefs.putBytes("model", g_model_rx, len);
+      model_ack(w == len ? "ok" : "ok_nosave", w == len ? "적용·저장" : "적용했지만 저장 실패");
+    }
+  }
+  g_model_pending = false;
+}
+
+/* 부팅: 저장된 모델이 있고 검사를 통과하면 그것을, 아니면 펌웨어 기본 모델 */
+static void model_boot()
+{
+  g_prefs.begin("ward", false);
+  size_t len = g_prefs.getBytesLength("model");
+  if (len > 0 && len <= WI_MODEL_TEXT_MAX) {
+    g_prefs.getBytes("model", g_model_rx, len);
+    wi_model_t M; char err[40];
+    if (wi_model_parse(g_model_rx, len, &M, err, sizeof(err))) { model_apply(M, "nvs"); return; }
+    Serial.print(F("# 저장된 모델이 깨짐 (")); Serial.print(err); Serial.println(F(") → 기본 모델"));
+    g_prefs.remove("model");
+  }
+  model_apply(WI_DEFAULT_MODEL, "default");
+}
+
 /* 상태 이름 (대시보드용): 기준선 전 WARMUP / Air CLEAN / 우리 향 SCENT / 악취 MALODOR / Unknown / 보류 HOLD */
 static const char *infer_state(int top)
 {
   if (top == WI_AIR) return "CLEAN";
   if (top == WI_WEAK || top == WI_NONE) return "HOLD";
   if (top == WI_UNKNOWN) return "UNKNOWN";
-  return WI_CLASSES[top].on ? "MALODOR" : "SCENT";
+  return g_wi.M.c[top].on ? "MALODOR" : "SCENT";
 }
 
 static void infer_push(const char *json)
@@ -134,22 +218,22 @@ static void infer_publish_decision(const wi_decision_t &D)
 {
   char js[INFER_MSG_MAX];
   const char *st = infer_state(D.top);
-  bool scent = (D.top >= 0 && !WI_CLASSES[D.top].on);
+  bool scent = (D.top >= 0 && !g_wi.M.c[D.top].on);
   snprintf(js, sizeof(js),
            "{\"device_id\":\"%s\",\"src\":\"ward\",\"model\":\"%s\",\"uptime_s\":%lu,"
            "\"state\":\"%s\",\"label\":\"%s\",\"label_note\":\"%s\",\"mag\":%.3f,"
            "\"votes\":%d,\"n\":%d,\"purifier\":\"%s\",\"event\":\"%s\","
            "\"alert\":{\"malodor\":%s},\"baseline_age_s\":%.0f}",
-           DEVICE_ID, WI_MODEL_ID, (unsigned long)(millis() / 1000),
-           st, wi_label_name(D.top), scent ? "추정" : "", isfinite(D.mag) ? D.mag : -1.0f,
+           DEVICE_ID, g_wi.M.id, (unsigned long)(millis() / 1000),
+           st, wi_label_name(&g_wi, D.top), scent ? "추정" : "", isfinite(D.mag) ? D.mag : -1.0f,
            D.k, D.n, D.purifier ? "on" : "off",
            D.event == 1 ? "ON" : (D.event == 2 ? "OFF" : ""),
-           (D.purifier && (D.top == WI_UNKNOWN || (D.top >= 0 && WI_CLASSES[D.top].on))) ? "true" : "false",
+           (D.purifier && (D.top == WI_UNKNOWN || (D.top >= 0 && g_wi.M.c[D.top].on))) ? "true" : "false",
            g_wi.sec_now - g_wi.base_sec);
   infer_push(js);
   /* 시리얼에도 한 줄 ('#' 로 시작해서 capture_serial.py 의 CSV 에는 안 섞임) */
   Serial.print(F("# I ")); Serial.print(D.sec, 1); Serial.print(' ');
-  Serial.print(st); Serial.print(' '); Serial.print(wi_label_name(D.top));
+  Serial.print(st); Serial.print(' '); Serial.print(wi_label_name(&g_wi, D.top));
   Serial.print(' '); Serial.print(D.k); Serial.print('/'); Serial.print(D.n);
   Serial.print(F(" mag=")); Serial.print(D.mag, 2);
   Serial.print(F(" purifier=")); Serial.print(D.purifier ? "ON" : "off");
@@ -165,7 +249,7 @@ static void infer_warmup_tick()
   char js[160];
   snprintf(js, sizeof(js),
            "{\"device_id\":\"%s\",\"src\":\"ward\",\"model\":\"%s\",\"uptime_s\":%lu,\"state\":\"WARMUP\"}",
-           DEVICE_ID, WI_MODEL_ID, (unsigned long)(millis() / 1000));
+           DEVICE_ID, g_wi.M.id, (unsigned long)(millis() / 1000));
   infer_push(js);
 }
 #endif
@@ -202,6 +286,9 @@ static void mqtt_task(void *arg)
     if (now && !wasConnected) {
       Serial.print(F("# MQTT 연결됨 → 발행 시작 (topic="));
       Serial.print(MQTT_TOPIC); Serial.println(F(")"));
+#if WARD_INFER
+      mqtt.subscribe(TOPIC_MODEL, 1);                /* retained 로 남아 있는 최신 모델이 바로 온다 */
+#endif
     } else if (!now && wasConnected) {
       Serial.println(F("# MQTT 끊김 → 재접속 시도"));
     }
@@ -236,6 +323,9 @@ static void mqtt_task(void *arg)
       InferMsg m;
       while (g_iq != NULL && xQueueReceive(g_iq, &m, 0) == pdTRUE)
         mqtt.publish(TOPIC_INFER, m.s, false);
+      AckMsg a;
+      while (g_aq != NULL && xQueueReceive(g_aq, &a, 0) == pdTRUE)
+        mqtt.publish(TOPIC_MODEL_ACK, a.s, false);
 #endif
     }
     vTaskDelay(pdMS_TO_TICKS(1000));
@@ -291,13 +381,17 @@ void setup(void)
   if (g_q == NULL) Serial.println(F("# WARN: 큐 생성 실패 → MQTT 전송 안 함"));
 #if WARD_INFER
   wi_init(&g_wi, wi_default_params());
+  model_boot();                                      /* 저장된 무선 모델이 있으면 그것 */
   g_iq = xQueueCreate(6, sizeof(InferMsg));
-  Serial.print(F("# infer on  model=")); Serial.print(WI_MODEL_ID);
-  Serial.print(F("  classes="));
-  for (int c = 0; c < WI_N_CLASSES; c++) {
-    Serial.print(WI_CLASSES[c].name); Serial.print(WI_CLASSES[c].on ? "(on) " : " ");
+  g_aq = xQueueCreate(2, sizeof(AckMsg));
+  Serial.print(F("# infer on  model=")); Serial.print(g_wi.M.id);
+  Serial.print(F(" (")); Serial.print(g_model_src); Serial.print(F(")  classes="));
+  for (int c = 0; c < g_wi.M.n; c++) {
+    Serial.print(g_wi.M.c[c].name); Serial.print(g_wi.M.c[c].on ? "(on) " : " ");
   }
-  Serial.print(F(" topic=")); Serial.println(TOPIC_INFER);
+  Serial.print(F(" topic=")); Serial.print(TOPIC_INFER);
+  Serial.print(F("  model topic=")); Serial.println(TOPIC_MODEL);
+  mqtt.setCallback(on_mqtt);
 #endif
   mqtt.setBufferSize(MQTT_BUF);
   /* 네트워킹은 core 0 전용 태스크. 측정 루프(core 1)를 막지 않는다 */
@@ -347,5 +441,6 @@ void loop(void)
   }
 #if WARD_INFER
   infer_warmup_tick();
+  model_poll();
 #endif
 }

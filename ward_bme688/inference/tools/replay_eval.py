@@ -81,7 +81,7 @@ def run_controller(model, rec_path, args, sprays=()):
     return on_times, off_times, base_sec, len(c.log), c.rebases
 
 
-def main():
+def parser():
     ap = argparse.ArgumentParser(description="녹화 단위로 빼고 학습 → 판정기 재생 → 청정기 동작 채점")
     ap.add_argument("data_dir", nargs="?", type=Path, default=DATA)
     ap.add_argument("--recordings", type=Path, default=RECORDINGS)
@@ -102,8 +102,15 @@ def main():
     ap.add_argument("--hit-before", type=float, default=30.0, help="악취 구간 시작 몇 초 전 ON 까지 성공으로 칠지")
     ap.add_argument("--hit-after", type=float, default=60.0, help="악취 구간 끝 몇 초 뒤 ON 까지 성공으로 칠지")
     ap.add_argument("-v", "--verbose", action="store_true")
-    args = ap.parse_args()
+    return ap
 
+
+def main():
+    run(parser().parse_args())
+
+
+def run(args):
+    """채점 결과 dict 를 돌려준다: mal(악취 구간 수), hit, lat(반응 초 목록), false_lab, false_unl, off_s"""
     print(f"=== 읽는 중: {args.data_dir} ===")
     with contextlib.redirect_stdout(io.StringIO()):
         df = load_dir(args.data_dir)
@@ -183,6 +190,7 @@ def main():
     if false_by:
         print(f"      어디서: {false_by}")
     print(f"  라벨 없는 구간 출동  {tot['false_unl']}번  (회복 중 등 — 참고)")
+    return tot
 
 
 if __name__ == "__main__":
