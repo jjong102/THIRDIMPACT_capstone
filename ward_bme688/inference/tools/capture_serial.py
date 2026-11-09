@@ -32,7 +32,7 @@ except (AttributeError, OSError):
     pass
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from paths import RECORDINGS, DATA, LABELS          # noqa: E402
+from paths import RECORDINGS, DATA, LABELS, MODEL   # noqa: E402
 
 try:
     import serial  # pyserial
@@ -62,8 +62,11 @@ def start_live_view(csv_path):
         kw["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         kw["start_new_session"] = True
+    cmd = [sys.executable, str(tool), str(csv_path)]
+    if MODEL.exists():                    # 그래프 오른쪽 위에 와드와 같은 판정(엔진)도 표시
+        cmd += ["--model", str(MODEL)]
     try:
-        p = subprocess.Popen([sys.executable, str(tool), str(csv_path)], **kw)
+        p = subprocess.Popen(cmd, **kw)
         print("  [실시간] 그래프 창을 띄웠습니다 (닫아도 녹화는 계속됩니다. 안 띄우려면 --no-live)\n")
         return p
     except OSError as e:

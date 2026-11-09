@@ -1,6 +1,6 @@
 # WARD 연동 규격 — 와드 ↔ UI Jetson ↔ 주행 Jetson
 
-와드 판정을 대시보드·주행에 잇기 위한 **메시지 형식 약속**이다. (2026-11-09 확정, 구현은 이 문서를 따른다)
+와드 판정을 대시보드·주행에 잇기 위한 **메시지 형식 약속**이다. (2026-11-09 확정, 같은 날 두 Jetson 을 SSH 로 확인해 실제 주행 명령으로 고침)
 결정: **MQTT → ROS 2 토픽으로 넘기고(ward_bridge_node), 출동 시작은 지금 화면 흐름(`useScentMissionNav`)이 맡는다.**
 
 ## 0. 전체 구조
@@ -13,17 +13,21 @@
                                                         │      ← fragrance_bridge (HTTP 5174)
                                                         │  ★ ward_bridge_node (ROS 2, 이 문서 3장)
                                                         │
-                                                        │ 유선 LAN enP8p1s0 · ROS 2 Humble · CycloneDDS(유니캐스트)
+                                                        │ 유선 LAN · ROS 2 Humble · CycloneDDS(유니캐스트) · ROS_DOMAIN_ID 3
                                                         ▼
-                                          [주행 Jetson 192.168.10.2]  slam_ros: SLAM · Nav2 · AMCL
-                                           /goal_pose · /amcl_pose · /diffusion_complete …
+                                          [주행 Jetson 192.168.10.2]  ~/capstone_final_ws · 패키지 third_impact
+                                           AMCL(자동 위치 찾기) · Nav2 · 정찰 + 저장 목표로 정밀 복귀
+                                           받음 /go_to_goal · /go_around   보냄 /arrival_at_goal · /third_impact/status
 ```
+- **저장 목표(goal) = 와드 위치.** 주행 쪽 `make_goal_launch.py` 로 와드 옆에 로봇을 세워 `Save Goal` 한다.
+  그래서 **"와드로 출동" = `/go_to_goal`** 이다 (방 좌표 `/goal_pose` 를 따로 보내지 않는다).
+- 주행 코드는 팀 저장소 `slam_ros` 가 아니라 별도 저장소 `jjong102/capstone_final_ws` (주행 담당 관리).
 
 | 구간 | 수단 | 누가 |
 |---|---|---|
 | 와드 → UI Jetson | MQTT (HiveMQ 클라우드) | 와드 펌웨어 → `ward_bridge_node` |
 | UI Jetson 안 | ROS 2 토픽 / HTTP(로컬) | `ward_bridge_node` → `ros_nav_bridge`(5179) → React |
-| UI Jetson ↔ 주행 Jetson | ROS 2 (DDS, 유선) | `ros_nav_bridge` ↔ Nav2 |
+| UI Jetson ↔ 주행 Jetson | ROS 2 (DDS, 유선) | `ros_nav_bridge` ↔ `third_impact` 임무 노드 (`/go_to_goal` · `/go_around` · `/arrival_at_goal`) |
 | UI Jetson → 청정기·발향 | USB 시리얼 | `fragrance_bridge`(5174) → Arduino |
 
 ## 1. MQTT — 와드가 보내는 것 (구현됨)
@@ -88,15 +92,20 @@ QoS 0, retained 아님. **60초 동안 `inference_ward` 가 없으면 "와드 �
 ## 2. 출동 흐름 (화면이 맡음)
 
 ```
-와드 event:"ON" ─▶ ward_bridge_node ─/ward/event─▶ ros_nav_bridge ─HTTP─▶ React useScentMissionNav
-   → 그 와드의 방(room.sensor_id == device_id)으로 goal_pose            (UI → 주행 Jetson, ROS 2)
-   → 도착 → fragrance_bridge: 청정기 ON + 발향                          (UI → Arduino)
-          같은 때 MQTT cmd "SPRAY <초>" → 와드 재출동 방지 (보내는 쪽 = fragrance_bridge 권장)
-   → 발향 끝 → /api/nav/diffusion_complete → /diffusion_complete       (주행 Jetson 회전 멈춤)
+평소: 주행 Jetson 은 방 안을 정찰 (/go_around 상태)
+
+와드 event:"ON" ─▶ ward_bridge_node ─/ward/event─▶ ros_nav_bridge ─HTTP─▶ React (useOdorResponse → useScentMission)
+   → /go_to_goal                    정찰 취소 → 저장 목표(= 와드)로 복귀 → 정밀 정렬     (UI → 주행 Jetson)
+   ← /arrival_at_goal (Empty, 한 번) 위치 오차 2cm·방향 ±5°·1초 정지 확인 뒤
+   → fragrance_bridge: 청정기 ON + 발향                                                 (UI → Arduino)
+     같은 때 MQTT cmd "SPRAY <초>" → 와드가 발향 중 + 3분 재출동 안 함 (보내는 쪽 = fragrance_bridge 권장)
+   → 발향·청정 끝 → /go_around      정찰 재개 (도착 후 HOLD 는 /go_around 로만 풀린다)
 와드 event:"OFF" ─▶ 화면: "공기 회복" 표시 (청정기 끄는 시점은 화면 흐름이 정함)
 ```
-- 이미 출동 중(`isNavigating`)이면 새 `ON` 은 무시한다 (와드 하나 기준).
-- `ON` 은 놓치면 다시 안 온다(바뀔 때만) → 화면이 늦게 켜졌으면 `/api/ward/state` 의 최근 `purifier:"on"` 으로 보완할 수 있다.
+- 이미 출동 중이면 새 `ON` 은 무시한다 (와드 하나 기준). 주행 쪽도 복귀 중 `/go_around` 는 무시하고, 도착 후 HOLD 에서는 `/go_to_goal` 을 무시한다.
+- `/arrival_at_goal` 은 reliable·volatile 이벤트 — `ros_nav_bridge` 가 **출동 전에 구독**하고 있어야 한다(늦게 구독하면 지난 도착을 다시 안 준다).
+- 와드 `ON` 도 바뀔 때만 온다 → 화면이 늦게 켜졌으면 `/api/ward/state` 의 최근 `purifier:"on"` 으로 보완할 수 있다.
+- 예전 흐름(`/goal_pose` 로 방 좌표 → `/diffusion_complete` 로 회전 멈춤)은 팀 저장소 `slam_ros` 의 옛 `all_in_one_launch` 기준이다. 지금 주행(`impact_launch`)에는 없다.
 
 ## 3. ROS 2 — `ward_bridge_node` (UI Jetson, **구현 예정**)
 
@@ -119,9 +128,9 @@ GDM 패키지의 `MQTT_sub_node` 를 새 와드 형식에 맞게 고치거나 �
  "mag":0.448,"votes":8,"n":8,"uptime_s":812,"rx_time":"2026-11-09T15:36:22+09:00"}
 ```
 
-### 3-2. 와드 → 방
-방 지도(`GDM/floor_plan/*_rooms_confirmed.json`)의 각 방에 이미 있는 **`sensor_id` 칸에 와드 이름**(`"ward-01"`)을 적는다.
-`room_id` = `sensor_id == device_id` 인 방의 `id`. 못 찾으면 `room_id: null` (화면은 "방 미지정" 표시, 출동 안 함).
+### 3-2. 와드 → 방 (화면 표시용)
+출동 목적지는 주행 쪽 저장 목표(= 와드 위치)라 방 좌표가 필요 없다. 화면에 "어느 방 와드인지" 띄울 때만
+방 지도(`GDM/floor_plan/*_rooms_confirmed.json`)의 **`sensor_id` 칸에 와드 이름**(`"ward-01"`)을 적어 `room_id` 를 붙인다. 못 찾으면 `room_id: null`.
 
 ### 3-3. `ros_nav_bridge` 에 더할 것 (화면용 HTTP, 구현 예정)
 | 경로 | 내용 |
@@ -130,7 +139,8 @@ GDM 패키지의 `MQTT_sub_node` 를 새 와드 형식에 맞게 고치거나 �
 | `GET /api/ward/events?since=<ms>` | 그 뒤의 `/ward/event` 목록 (화면이 1초마다 물어봄) |
 
 ## 4. 아직 정할 것
-- [ ] 출동 뒤 청정기를 끄는 시점: 와드 `OFF` / 발향 끝 / 고정 시간 중 무엇
+- [ ] 출동 뒤 청정기를 끄고 `/go_around` 하는 시점: 와드 `OFF` / 발향 끝 / 고정 시간 중 무엇
+- [ ] 정찰 중 청정기는 켜 둘지(정찰 = 청정) 꺼 둘지 — 청정기가 돌면 와드 신호가 1/10 로 약해진다(실측)
 - [ ] `SPRAY <초>` 를 누가 보내나: `fragrance_bridge` (발향 명령과 같은 자리) 권장
 - [ ] 와드가 여러 개일 때 동시 출동 순서
 - [ ] 예전 `sensor/air_quality` → `/scent/raw` 경로(옛 와드 형식)는 새 와드로 바뀐 뒤 정리
