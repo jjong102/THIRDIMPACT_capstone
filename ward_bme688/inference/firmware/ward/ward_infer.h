@@ -221,7 +221,13 @@ static inline int wi_vote(const wi_model_t *M, const int *labs, int n, int *k_ou
     }
     *k_out = off; return offtop;
   }
-  *k_out = topc; return WI_UNKNOWN;
+  /* 켬 쪽(Unknown·악취 클래스)도 과반이 아니면 보류 — 4/8 Unknown + 4/8 Weak 같은 경계 신호로 출동하지 않게 (11/09) */
+  {
+    int on = 0;
+    for (i = 0; i < n; i++) if (wi_is_on(M, labs[i])) on++;
+    if (on * 2 > n) { *k_out = on; return WI_UNKNOWN; }
+  }
+  *k_out = topc; return WI_WEAK;
 }
 
 static inline void wi_note_spray(wi_state_t *S, float sec, float dur) {

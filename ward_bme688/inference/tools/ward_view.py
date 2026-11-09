@@ -15,6 +15,8 @@ ward_view.py
   python ward_view.py --device ward-02
   python ward_view.py --rebase       # 기준선만 다시 잡기 (센서는 데워진 채) → 답장 받고 끝
   python ward_view.py --reboot       # 와드 재시작 (RESET 버튼과 같음, 켠 지 30초 안에는 무시)
+  python ward_view.py --spray 90     # "지금부터 90초 향을 뿌린다" → 뿌리는 동안 + 180초, 모르는 냄새로는 출동 안 함
+                                     # (실제로는 발향하는 쪽(fragrance_bridge)이 보낸다 — INTERFACE.md)
 """
 
 import argparse
@@ -43,9 +45,12 @@ def main():
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--rebase", action="store_true", help="와드에 기준선 다시 잡기 명령을 보내고 끝")
     g.add_argument("--reboot", action="store_true", help="와드에 재시작 명령을 보내고 끝")
+    g.add_argument("--spray", type=int, metavar="초", help="와드에 'N초 향을 뿌린다' 알림을 보내고 끝")
     args = ap.parse_args()
     if args.rebase or args.reboot:
         return send_cmd(args.device, "REBASE" if args.rebase else "REBOOT")
+    if args.spray is not None:
+        return send_cmd(args.device, f"SPRAY {max(0, args.spray)}")
     broker, port, user, pw = credentials()
     base = f"diffuser/{args.device}"
     st = {"sensor": 0, "up": None, "last": time.time()}
@@ -124,7 +129,7 @@ def send_cmd(device, cmd, wait=15.0):
             d = json.loads(msg.payload.decode("utf-8", "replace"))
         except ValueError:
             return
-        if d.get("result") in ("rebase", "reboot"):
+        if d.get("result") in ("rebase", "reboot", "spray"):
             got.update(d)
 
     c.on_connect, c.on_message = on_connect, on_message

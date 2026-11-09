@@ -27,7 +27,9 @@
 #define TOPIC_MODEL_ACK TOPIC_PREFIX "/model/ack"
 // 원격 명령 (tools/ward_view.py --rebase / --reboot). retained 로 보내지 말 것.
 //   "REBASE" = 판정 상태만 처음으로 (센서는 계속 데워진 채, 1분 평평하면 기준선 다시)
-//   "REBOOT" = 보드 재시작 (RESET 버튼과 같음). 답장은 TOPIC_MODEL_ACK 로.
+//   "REBOOT" = 보드 재시작 (RESET 버튼과 같음).
+//   "SPRAY <초>" = 지금부터 N초 향을 뿌림 → 뿌리는 동안 + 끝나고 180초, Unknown 으로는 출동 안 함 (확실한 악취 클래스로만).
+//   답장은 TOPIC_MODEL_ACK 로.
 #define TOPIC_CMD       TOPIC_PREFIX "/cmd"
 
 // WiFi 를 쓸지. 0 이면 WiFi·MQTT 를 아예 켜지 않는다 (USB 로 쓰면서 온디바이스 판정만 시리얼로 볼 때).

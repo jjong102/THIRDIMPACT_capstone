@@ -4,7 +4,7 @@
  *   측정(8센서) ─┬─ USB 시리얼: CSV 전체 행 ──────────────▶ capture_serial.py (USB 수집)
  *                ├─ MQTT diffuser/ward-01/sensor (원시값) ──▶ mqtt_capture.py   (배터리 수집)
  *                └─ ward_infer.h 판정 ── diffuser/ward-01/inference_ward ──▶ ward_view.py · 대시보드
- *   받는 것: diffuser/ward-01/model (새 모델, NVS 저장) · diffuser/ward-01/cmd (REBASE / REBOOT)
+ *   받는 것: diffuser/ward-01/model (새 모델, NVS 저장) · diffuser/ward-01/cmd (REBASE / REBOOT / SPRAY <초>)
  *
  * 설정은 config.h — WARD_WIFI 1(기본, 배터리·MQTT) / 0(USB 전용: WiFi 끔, Brownout 없이 수집).
  *   11/09 까지는 USB 수집용 ward_usb 가 따로 있었다. 출력이 같아 이 펌웨어 하나로 합쳤다.
@@ -132,13 +132,23 @@ static void model_ack(const char *result, const char *msg)
 }
 
 /* core 0: PubSubClient 콜백 — 복사만 */
-static volatile int g_cmd = 0;                        /* 1 = REBASE, 2 = REBOOT (TOPIC_CMD) */
+static volatile int g_cmd = 0;                        /* 1 = REBASE, 2 = REBOOT, 3 = SPRAY (TOPIC_CMD) */
+static volatile int g_spray_s = 0;                    /* SPRAY <초> 의 초 */
 
 static void on_mqtt(char *topic, byte *payload, unsigned int len)
 {
   if (strcmp(topic, TOPIC_CMD) == 0) {
     if (len >= 6 && memcmp(payload, "REBASE", 6) == 0) g_cmd = 1;
     else if (len >= 6 && memcmp(payload, "REBOOT", 6) == 0) g_cmd = 2;
+    else if (len >= 5 && memcmp(payload, "SPRAY", 5) == 0) {   /* "SPRAY 90" = 지금부터 90초 향을 뿌린다 */
+      char num[12]; unsigned int k = 0, i = 5;
+      while (i < len && payload[i] == ' ') i++;
+      while (i < len && k < sizeof(num) - 1 && payload[i] >= '0' && payload[i] <= '9') num[k++] = (char)payload[i++];
+      num[k] = '\0';
+      int sec = k ? atoi(num) : 0;
+      g_spray_s = sec < 0 ? 0 : (sec > 1800 ? 1800 : sec);
+      g_cmd = 3;
+    }
     return;
   }
   if (strcmp(topic, TOPIC_MODEL) != 0) return;
@@ -168,6 +178,12 @@ static void model_poll()
     g_wi.M = M;
     g_lastWarmMsg = 0;
     model_ack("rebase", "기준선 다시 잡는 중 (1분 평평하면)");
+  } else if (g_cmd == 3) {                           /* 스스로 뿌린 향: 뿌리는 동안 + 끝나고 spray_lock 초, Unknown 으로는 출동 안 함 */
+    g_cmd = 0;
+    wi_note_spray(&g_wi, g_wi.sec_now, (float)g_spray_s);
+    char m[48];
+    snprintf(m, sizeof(m), "발향 %d초 + %.0f초 잠금", g_spray_s, g_wi.P.spray_lock);
+    model_ack("spray", m);
   } else if (g_cmd == 2) {
     g_cmd = 0;
     if (millis() > 30000) {                           /* 부팅 직후엔 무시 (혹시 남은 명령으로 재부팅 반복 방지) */

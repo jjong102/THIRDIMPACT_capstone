@@ -60,14 +60,29 @@ QoS 0, retained 아님. **60초 동안 `inference_ward` 가 없으면 "와드 �
 | `uptime_s` | 초 | 와드 켜진 시간. **줄어들면 재부팅** |
 | `baseline_age_s` | 초 | 기준선(깨끗한 공기)을 잡은 지 몇 초 |
 
-출동 규칙(와드 안에서 판정): 악취·모르는 냄새 **3번 연속(약 30초) → `event:"ON"`**. 향·깨끗함이 12번 연속 + 켠 지 3분 → `event:"OFF"`. 향·약함은 출동시키지 않는다.
+**대시보드 이름 맞추기** (11/09 기준 대시보드 `sensorLabels.js`·`mqtt_bridge.py` 의 tone, 발향 채널 `MIST_CHANNELS = [mint, lavender, orange]` = MIST1·2·3):
+
+| 와드 `label` | 대시보드 tone | 화면 | 발향 채널 |
+|---|---|---|---|
+| `Air` | `fresh` | 깨끗한 공기 | — |
+| `Peppermint` | `mint` | 향기 (민트 추정) | MIST1 |
+| `Lavender` | `lavender` | 향기 (라벤더 추정) — **악취 아님** | MIST2 |
+| `Orange` | `orange` | 향기 (오렌지 추정) | MIST3 |
+| `Vinegar` | `odor` | **악취 (식초)** | — |
+| `Unknown` | `odor` | 처음 보는 냄새 (출동 쪽) | — |
+| `Weak` | (표시 유지) | 약한 신호 | — |
+
+> ⚠ 예전 대시보드 센서(옛 분류 펌웨어)는 `lavender`/`floral` 을 "시연에선 악취" 로 썼다. 새 와드에서는 **라벤더 = 우리 향(청정기 끔), 악취 = 식초**다.
+> 판정은 `state` 로 하고(`SCENT` = 향기, `MALODOR`/`UNKNOWN` = 악취 쪽), 이름은 표시용으로만 쓴다.
+
+출동 규칙(와드 안에서 판정): 센서 8개 표결에서 악취·모르는 냄새 쪽이 **과반**이고 **3번 연속(약 30초) → `event:"ON"`**. 향·깨끗함이 12번 연속 + 켠 지 3분 → `event:"OFF"`. 향·약함은 출동시키지 않는다.
 
 ### 1-2. MQTT — 와드로 보내는 것
 
 | 토픽 | 내용 | 상태 |
 |---|---|---|
 | `diffuser/ward-01/cmd` | `REBASE` (기준선 다시) / `REBOOT` — retained 금지 | 구현됨 (`tools/ward_view.py --rebase`) |
-| `diffuser/ward-01/cmd` | `SPRAY <초>` — "지금부터 N초 향을 뿌린다" → 와드가 뿌리는 동안 + 끝나고 3분, 모르는 냄새로는 출동 안 함 | **예정** (와드 펌웨어 추가 필요, 판정 코드에는 이미 있음) |
+| `diffuser/ward-01/cmd` | `SPRAY <초>` — "지금부터 N초 향을 뿌린다" → 와드가 뿌리는 동안 + 끝나고 3분, 모르는 냄새로는 출동 안 함 (확실한 악취 클래스로만). 답장 `result:"spray"` | 구현됨 (11/09, 와드 업로드 필요) · 시험 `ward_view.py --spray 90` |
 | `diffuser/ward-01/model` | 새 모델 (retained, CRC) | 구현됨 (`tools/push_model.py`) |
 
 ## 2. 출동 흐름 (화면이 맡음)
@@ -76,7 +91,7 @@ QoS 0, retained 아님. **60초 동안 `inference_ward` 가 없으면 "와드 �
 와드 event:"ON" ─▶ ward_bridge_node ─/ward/event─▶ ros_nav_bridge ─HTTP─▶ React useScentMissionNav
    → 그 와드의 방(room.sensor_id == device_id)으로 goal_pose            (UI → 주행 Jetson, ROS 2)
    → 도착 → fragrance_bridge: 청정기 ON + 발향                          (UI → Arduino)
-          (예정) 같은 때 MQTT cmd "SPRAY <초>" → 와드 재출동 방지
+          같은 때 MQTT cmd "SPRAY <초>" → 와드 재출동 방지 (보내는 쪽 = fragrance_bridge 권장)
    → 발향 끝 → /api/nav/diffusion_complete → /diffusion_complete       (주행 Jetson 회전 멈춤)
 와드 event:"OFF" ─▶ 화면: "공기 회복" 표시 (청정기 끄는 시점은 화면 흐름이 정함)
 ```
