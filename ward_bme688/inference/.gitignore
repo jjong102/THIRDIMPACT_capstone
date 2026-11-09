@@ -3,3 +3,6 @@ training/
 
 # 자격증명
 **/secrets.h
+
+# PC 판정 엔진 빌드 결과 (ward_engine.py 가 자동 생성)
+tools/.ward_engine/

@@ -1,24 +1,22 @@
 #!/usr/bin/env python3
 """
 firmware_parity.py
-와드 펌웨어의 판정 코드(firmware/ward_mqtt/ward_infer.h)가 파이썬 판정기(ward_controller.py)와
-**같은 판정을 내는지** PC 에서 확인한다. 펌웨어에 올리기 전에, 그리고 둘 중 하나를 고친 뒤에 꼭 돌린다.
+와드 펌웨어 판정 코드(firmware/ward_mqtt/ward_infer.h)의 **펌웨어 쪽 검사**.
 
-  1. 모델(json) → model.h (export_model.py 와 같은 변환)
-  2. ward_infer.h + model.h + 작은 시험 프로그램을 gcc 로 컴파일 (임시 폴더)
-  3. 같은 녹화 CSV 를 C 프로그램과 파이썬 Controller 에 각각 흘림
-  4. 라운드마다의 판정·청정기 권고와 ON/OFF 시점을 비교
-  5. 무선 모델(글자 형식) 읽기 시험: 정상 모델은 받아들여 판정이 같고, 망가진 모델은 거절하는지
+11/09 부터 판정 규칙은 ward_infer.h 한 곳에만 있고, PC 도구(ward_controller·replay_eval·update_model)는
+ward_engine.py 로 그 C 코드를 그대로 불러 쓴다 → 예전의 "파이썬과 C 판정 비교"는 필요 없어졌다.
+남은 검사:
+  1. 모델(json) → model.h (export_model.py 와 같은 변환) + ward_infer.h 를 gcc -Wall 로 컴파일 (펌웨어에 고정될 기본 모델)
+  2. 무선 모델(글자 형식) 읽기 시험: 정상 모델은 받아들여 model.h 기본 모델과 판정이 같고, 망가진 모델 5종은 거절
+  3. 녹화 재생: 펌웨어 시험 프로그램과 ward_engine 의 판정이 같은지 (빌드 설정 차이 확인)
 
 사용:
-  python firmware_parity.py                      # training/recordings 의 녹화 전부, 모델 = 기본 모델 경로
+  python firmware_parity.py                      # 모델 = 기본 모델 경로, 재생 = 가장 최근 녹화
   python firmware_parity.py ..\\training\\recordings\\rec_....csv
 필요: gcc (MinGW).
 """
 
 import argparse
-import contextlib
-import io
 import json
 import shutil
 import subprocess
@@ -34,7 +32,7 @@ except (AttributeError, OSError):
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from paths import MODEL, RECORDINGS, WARD_FW              # noqa: E402
 from export_model import export, model_text               # noqa: E402
-from ward_controller import Controller                    # noqa: E402
+from ward_engine import WardEngine                        # noqa: E402
 
 INFER_H = WARD_FW / "ward_infer.h"
 
@@ -71,26 +69,6 @@ int main(int argc, char **argv) {
   return 0;
 }
 """
-
-
-def python_log(model, csv, rebase):
-    ns = argparse.Namespace(on=None, on_cycles=3, off_cycles=12, min_on=180.0, warmup=60.0, flat=0.05,
-                            base_at=None, track=0.02, rebase=rebase, rebase_weak=False, spray_lock=180.0, stuck_rebase=60.0,
-                            on_cmd="ON000", verbose=False)
-    c = Controller(model, ns, send=False)
-    with contextlib.redirect_stdout(io.StringIO()):
-        for ln in csv.read_text(encoding="utf-8", errors="replace").splitlines():
-            c.feed(ln.strip())
-    return [(sec, top, on, k) for sec, top, k, n, mag, on in c.log]
-
-
-def transitions(seq):
-    out, prev = [], False
-    for sec, _top, on, *_ in seq:
-        if on != prev:
-            out.append((round(sec / 60, 1), "ON" if on else "OFF"))
-        prev = on
-    return out
 
 
 def _decisions(stdout):
@@ -151,61 +129,45 @@ def parser_selftest(model, on, exe, csv, td, rebase):
     return ok_parse and same and all(v[0] for v in rejected.values()), ok_parse, same, rejected
 
 
+def engine_log(model, on, csv, rebase):
+    e = WardEngine(model, on, rebase=rebase)
+    seq = []
+    for ln in csv.read_text(encoding="utf-8", errors="replace").splitlines():
+        D = e.feed(ln.strip())
+        if D:
+            seq.append((round(D.sec, 3), D.top, D.purifier, D.k))
+    return seq
+
+
 def run(files=None, model_path=MODEL, rebase=180.0, verbose=True):
-    """반환: dict(round_match, rounds, on_py, on_c, on_matched, parser_ok)"""
+    """반환: dict(build_ok, parser_ok, engine_same, rounds)"""
     if shutil.which("gcc") is None:
         raise RuntimeError("gcc 가 없습니다 (MinGW 설치 필요).")
     model = json.loads(Path(model_path).read_text(encoding="utf-8"))
     on = model.get("on_labels", ["Coffee", "Vinegar"])
-    files = files or sorted(p for p in RECORDINGS.glob("*.csv") if "discard" not in p.name)
+    files = files or sorted((p for p in RECORDINGS.glob("*.csv") if "discard" not in p.name),
+                            key=lambda p: p.stat().st_mtime)[-1:]
     say = print if verbose else (lambda *a, **k: None)
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
         exe, warn = build(model, on, td)
-        if warn:
-            say("[gcc 경고]\n" + warn)
-        say(f"[모델] {Path(model_path).name}  클래스 {', '.join(sorted(model['classes']))}  출동 {', '.join(on)}\n")
-        tot_n = tot_same = tot_on_p = tot_on_c = tot_on_m = 0
+        say("[빌드] ward_infer.h + model.h 컴파일 ✓" + (f"\n[gcc 경고]\n{warn}" if warn else ""))
+        say(f"[모델] {Path(model_path).name}  클래스 {', '.join(sorted(model['classes']))}  출동 {', '.join(on)}")
+        same_all, rounds = True, 0
         for csv in files:
-            out = subprocess.run([str(exe), str(csv), str(rebase)], capture_output=True, text=True).stdout
-            c_seq = _decisions(out)
-            py = python_log(model, csv, rebase)
-            # 가장 가까운 C 판정(±5초 = 판정 주기의 절반)과 짝지어 비교.
-            # 센서 8개 사이클을 묶는 방식이 파이썬(전체 기록으로 위상 계산)과 C(라운드)가 달라 판정 시각이
-            # 몇 초 어긋날 수 있다 — 판정 내용이 같은지를 본다.
-            j = same = n = 0
-            kbad = 0
-            for sec, top, on_, kk in py:
-                while j + 1 < len(c_seq) and abs(c_seq[j + 1][0] - sec) <= abs(c_seq[j][0] - sec):
-                    j += 1
-                if c_seq and abs(c_seq[j][0] - sec) <= 5:
-                    n += 1
-                    ok_ = c_seq[j][1] == top and c_seq[j][2] == on_
-                    same += ok_
-                    kbad += ok_ and c_seq[j][3] != kk    # 판정은 같은데 표 수가 다름 = C 쪽 계산 버그
-            tot_n += n
-            tot_same += same
-            tp, tc = transitions(py), transitions(c_seq)
-            ons_p = [t for t, e in tp if e == "ON"]
-            ons_c = [t for t, e in tc if e == "ON"]
-            matched = sum(1 for t in ons_p if any(abs(t - u) <= 1.0 for u in ons_c))
-            tot_on_p += len(ons_p)
-            tot_on_c += len(ons_c)
-            tot_on_m += matched
-            say(f"{csv.name:45s} 판정 파이썬 {len(py):4d} / C {len(c_seq):4d}  짝 {n:4d}  일치 {100*same/max(n,1):5.1f}%  "
-                f"출동 파이썬 {len(ons_p)} / C {len(ons_c)} (1분 안 일치 {matched})" + (f"  ✗ 표 수 다름 {kbad}" if kbad else ""))
-            if matched != len(ons_p) or len(ons_p) != len(ons_c):
-                say(f"    파이썬 {tp}\n    C      {tc}")
-        say(f"\n전체: 라운드 판정 일치 {100*tot_same/max(tot_n,1):.1f}% ({tot_same}/{tot_n}) · "
-            f"출동 파이썬 {tot_on_p} / C {tot_on_c}, 1분 안 일치 {tot_on_m}")
-
+            fw = [(round(a, 3), b, c, d) for a, b, c, d in
+                  _decisions(subprocess.run([str(exe), str(csv), str(rebase)], capture_output=True, text=True).stdout)]
+            en = engine_log(model, on, csv, rebase)
+            same = fw == en
+            same_all &= same
+            rounds += len(fw)
+            say(f"[재생] {csv.name}  펌웨어 시험 프로그램 {len(fw)}판정 / 엔진 {len(en)}판정  {'같음 ✓' if same else '✗ 다름'}")
         all_ok, ok_parse, same, rejected = parser_selftest(model, on, exe, files[-1], td, rebase)
-        say(f"\n[무선 모델 읽기 시험] 정상 모델 {'받아들임' if ok_parse else '✗ 거절'} · "
+        say(f"[무선 모델 읽기 시험] 정상 모델 {'받아들임' if ok_parse else '✗ 거절'} · "
             f"기본 모델과 판정 {'같음' if same else '✗ 다름'}")
         for name, (rej, msg) in rejected.items():
             say(f"    {name:12s} → {'거절 ✓' if rej else '✗ 받아들임!'}  {msg}")
-        return dict(round_match=tot_same / max(tot_n, 1), rounds=tot_n, on_py=tot_on_p, on_c=tot_on_c,
-                    on_matched=tot_on_m, parser_ok=all_ok)
+        return dict(build_ok=True, parser_ok=all_ok, engine_same=same_all, rounds=rounds)
 
 
 def main():

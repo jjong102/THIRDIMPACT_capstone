@@ -67,7 +67,7 @@ def run_controller(model, rec_path, args, sprays=()):
     with contextlib.redirect_stdout(io.StringIO()):
         for ln in rec_path.read_text(encoding="utf-8", errors="replace").splitlines():
             c.feed(ln.strip())
-            while pending and pending[0][0] <= c.st.sec_now:
+            while pending and pending[0][0] <= c.sec_now:
                 a, dur = pending.pop(0)
                 c.note_spray(a, dur)
     on_times, off_times, prev = [], [], False

@@ -5,17 +5,19 @@ update_model.py
 
   1. 학습        training/data → 새 모델 (임시 파일)
   2. 성능 검사    replay_eval: 녹화 하나씩 빼고 학습 → 판정기 재생 → 악취 출동률·잘못 출동 횟수
-  3. 펌웨어 검사  firmware_parity: 와드 C 판정이 파이썬과 같은지 + 무선 모델 읽기 시험
+                 (판정기 = ward_engine = 와드 펌웨어의 ward_infer.h 그대로 → 이 숫자가 곧 와드 동작)
+  3. 펌웨어 검사  firmware_parity: model.h 컴파일 + 무선 모델 읽기 시험 + 엔진 == 펌웨어 시험 프로그램
   4. 통과하면     이전 모델을 inference/model_history/ 에 보관 → 새 모델로 교체 → model.h 다시 생성
   5. (--push)    MQTT 로 와드에 바로 보냄 (push_model.py) — 펌웨어 다시 올릴 필요 없음
 
-통과 기준 (바꿀 수 있음): 악취 출동 ≥ 90% · 잘못 출동 ≤ 시간당 1번 · C 판정 일치 ≥ 85% · 무선 모델 읽기 정상.
+통과 기준 (바꿀 수 있음): 악취 출동 ≥ 90% · 잘못 출동 ≤ 시간당 1번 · 무선 모델 읽기 정상.
+필요: gcc (판정 엔진을 ward_infer.h 에서 빌드).
 기준에 못 미치면 지금 모델을 그대로 두고 이유를 보여 준다 (--force 면 그래도 교체).
 
 사용:
   python update_model.py                 # 학습 → 검사 → 교체 (와드에는 안 보냄)
   python update_model.py --push          # + 와드로 무선 전송
-  python update_model.py --skip-parity   # gcc 가 없는 PC (Jetson 등)
+  python update_model.py --skip-parity   # 펌웨어 검사 생략 (빠르게)
   python update_model.py --rollback      # 바로 이전 모델로 되돌림 (+ --push 로 와드도)
 """
 
@@ -109,9 +111,8 @@ def main():
     ap.add_argument("--on", nargs="*", default=["Coffee", "Vinegar"], help="출동 라벨")
     ap.add_argument("--min-hit", type=float, default=0.90, help="악취 출동률 최소 (기본 0.90)")
     ap.add_argument("--max-false-per-h", type=float, default=1.0, help="잘못 출동 최대 (시간당, 기본 1.0)")
-    ap.add_argument("--min-parity", type=float, default=0.85, help="C 판정 일치 최소 (기본 0.85)")
     ap.add_argument("--skip-eval", action="store_true", help="성능 검사 생략 (빠르지만 위험)")
-    ap.add_argument("--skip-parity", action="store_true", help="펌웨어 검사 생략 (gcc 없는 PC)")
+    ap.add_argument("--skip-parity", action="store_true", help="펌웨어 검사 생략")
     ap.add_argument("--force", action="store_true", help="기준에 못 미쳐도 교체")
     ap.add_argument("--push", action="store_true", help="교체 후 MQTT 로 와드에 보냄")
     ap.add_argument("--device", default="ward-01")
@@ -156,14 +157,14 @@ def main():
     tmp_model = tmpdir / "new_model.json"
     tmp_model.write_text(json.dumps(new, ensure_ascii=False, indent=1), encoding="utf-8")
     if not args.skip_parity:
-        step(3, "펌웨어 검사 (와드 C 판정 == 파이썬, 무선 모델 읽기)")
+        step(3, "펌웨어 검사 (model.h 컴파일, 무선 모델 읽기, 엔진 == 펌웨어 시험 프로그램)")
         try:
             import firmware_parity
             r = firmware_parity.run(None, tmp_model, verbose=False)
-            print(f"  라운드 판정 일치 {r['round_match']:.1%} ({r['rounds']}라운드) · 출동 파이썬 {r['on_py']} / C {r['on_c']}, "
-                  f"1분 안 일치 {r['on_matched']} · 무선 모델 읽기 {'정상' if r['parser_ok'] else '✗ 이상'}")
-            if r["round_match"] < args.min_parity:
-                problems.append(f"C 판정 일치 {r['round_match']:.0%} < {args.min_parity:.0%}")
+            print(f"  컴파일 ✓ · 무선 모델 읽기 {'정상' if r['parser_ok'] else '✗ 이상'} · "
+                  f"엔진 == 펌웨어 {'같음' if r['engine_same'] else '✗ 다름'} ({r['rounds']}판정)")
+            if not r["engine_same"]:
+                problems.append("엔진과 펌웨어 시험 프로그램 판정이 다름 (빌드 설정 확인)")
             if not r["parser_ok"]:
                 problems.append("무선 모델 읽기 시험 실패")
         except RuntimeError as e:
