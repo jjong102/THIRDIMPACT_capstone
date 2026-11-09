@@ -15,7 +15,7 @@ ward_view.py
   python ward_view.py --device ward-02
   python ward_view.py --rebase       # 기준선만 다시 잡기 (센서는 데워진 채) → 답장 받고 끝
   python ward_view.py --reboot       # 와드 재시작 (RESET 버튼과 같음, 켠 지 30초 안에는 무시)
-  python ward_view.py --spray 90     # "지금부터 90초 향을 뿌린다" → 뿌리는 동안 + 180초, 모르는 냄새로는 출동 안 함
+  python ward_view.py --spray 90 --scent peppermint   # "지금부터 90초 페퍼민트를 뿌린다" → 뿌리는 동안 + 180초, 모르는 냄새로는 출동 안 함
                                      # (실제로는 발향하는 쪽(fragrance_bridge)이 보낸다 — INTERFACE.md)
 """
 
@@ -35,6 +35,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mqtt_capture import make_client                      # noqa: E402
 from push_model import credentials                        # noqa: E402
 
+SCENT_KO = {"peppermint": "페퍼민트", "mint": "페퍼민트", "lavender": "라벤더", "orange": "오렌지"}
+LABEL_KO = {"Peppermint": "페퍼민트", "Lavender": "라벤더", "Orange": "오렌지", "Vinegar": "식초",
+            "Unknown": "모르는 냄새", "Air": "", "Weak": ""}
+
+
+def strength_bar(pct, width=10):
+    n = max(0, min(width, round(pct * width / 100)))
+    return "█" * n + "░" * (width - n)
+
+
 STATE_KO = {"WARMUP": "예열 중", "CLEAN": "깨끗함", "SCENT": "향기", "MALODOR": "악취",
             "UNKNOWN": "모르는냄새", "HOLD": "보류"}
 
@@ -46,11 +56,12 @@ def main():
     g.add_argument("--rebase", action="store_true", help="와드에 기준선 다시 잡기 명령을 보내고 끝")
     g.add_argument("--reboot", action="store_true", help="와드에 재시작 명령을 보내고 끝")
     g.add_argument("--spray", type=int, metavar="초", help="와드에 'N초 향을 뿌린다' 알림을 보내고 끝")
+    ap.add_argument("--scent", default="", help="--spray 와 함께: 뿌리는 향 이름 (peppermint / lavender / orange)")
     args = ap.parse_args()
     if args.rebase or args.reboot:
         return send_cmd(args.device, "REBASE" if args.rebase else "REBOOT")
     if args.spray is not None:
-        return send_cmd(args.device, f"SPRAY {max(0, args.spray)}")
+        return send_cmd(args.device, f"SPRAY {max(0, args.spray)} {args.scent}".strip())
     broker, port, user, pw = credentials()
     base = f"diffuser/{args.device}"
     st = {"sensor": 0, "up": None, "last": time.time()}
@@ -84,9 +95,18 @@ def main():
         state = d.get("state", "")
         line = f"{time.strftime('%H:%M:%S')}  가동 {up:>5}s  {STATE_KO.get(state, state):6s}"
         if state != "WARMUP":
-            note = f"({d.get('label_note')})" if d.get("label_note") else ""
-            line += (f"  {d.get('label', ''):9s}{note}  세기 {d.get('mag', 0):.2f}  표 {d.get('votes')}/{d.get('n')}  "
+            pct = d.get("strength_pct")
+            if pct is None:                       # strength_pct 없는 옛 펌웨어
+                strength = f"세기 {d.get('mag', 0):.2f}"
+            else:
+                strength = f"세기 {strength_bar(pct)} {pct:3d}%"
+            name = LABEL_KO.get(d.get("label", ""), d.get("label", ""))
+            if state == "SCENT" and name:
+                name += "(추정)"
+            line += (f"  {name:10s} {strength}  표 {d.get('votes')}/{d.get('n')}  "
                      f"청정기 {'ON' if d.get('purifier') == 'on' else 'off'}")
+            if d.get("spraying"):
+                line += f"  · 지금 뿌리는 향: {SCENT_KO.get(d['spraying'].lower(), d['spraying'])}"
             if d.get("event") == "ON":
                 line += "  ◀ 출동"
             elif d.get("event") == "OFF":

@@ -101,7 +101,7 @@ static void enqueue(const char *s)
 
 #if WARD_INFER
 /* ---------- 온디바이스 판정 ---------- */
-#define INFER_MSG_MAX 288
+#define INFER_MSG_MAX 352
 struct InferMsg { char s[INFER_MSG_MAX]; };
 QueueHandle_t g_iq = NULL;             /* 판정 JSON → 네트워킹 태스크. 최근 것만 의미 있어 짧게 */
 static wi_state_t g_wi;
@@ -134,6 +134,9 @@ static void model_ack(const char *result, const char *msg)
 /* core 0: PubSubClient 콜백 — 복사만 */
 static volatile int g_cmd = 0;                        /* 1 = REBASE, 2 = REBOOT, 3 = SPRAY (TOPIC_CMD) */
 static volatile int g_spray_s = 0;                    /* SPRAY <초> 의 초 */
+static char g_spray_rx[16];                          /* SPRAY <초> <향 이름> 의 이름 (콜백에서 복사) */
+static char g_spray_name[16];                        /* 지금 뿌리는 향 이름 (판정 메시지 "spraying") */
+static float g_spray_until = -1.0f;                  /* 이 시각(sec_now)까지 뿌리는 중 */
 
 static void on_mqtt(char *topic, byte *payload, unsigned int len)
 {
@@ -147,6 +150,10 @@ static void on_mqtt(char *topic, byte *payload, unsigned int len)
       num[k] = '\0';
       int sec = k ? atoi(num) : 0;
       g_spray_s = sec < 0 ? 0 : (sec > 1800 ? 1800 : sec);
+      while (i < len && payload[i] == ' ') i++;           /* 선택: 향 이름 (예: "SPRAY 90 peppermint") */
+      k = 0;
+      while (i < len && k < sizeof(g_spray_rx) - 1 && payload[i] > ' ' && payload[i] != '"' && payload[i] != '\\') g_spray_rx[k++] = (char)payload[i++];
+      g_spray_rx[k] = '\0';
       g_cmd = 3;
     }
     return;
@@ -177,10 +184,14 @@ static void model_poll()
     wi_init(&g_wi, g_wi.P);
     g_wi.M = M;
     g_lastWarmMsg = 0;
+    g_spray_until = -1.0f;                         /* 시간 기준이 다시 0 부터 */
     model_ack("rebase", "기준선 다시 잡는 중 (1분 평평하면)");
   } else if (g_cmd == 3) {                           /* 스스로 뿌린 향: 뿌리는 동안 + 끝나고 spray_lock 초, Unknown 으로는 출동 안 함 */
     g_cmd = 0;
     wi_note_spray(&g_wi, g_wi.sec_now, (float)g_spray_s);
+    strncpy(g_spray_name, g_spray_rx, sizeof(g_spray_name) - 1);
+    g_spray_name[sizeof(g_spray_name) - 1] = '\0';
+    g_spray_until = g_wi.sec_now + (float)g_spray_s;
     char m[48];
     snprintf(m, sizeof(m), "발향 %d초 + %.0f초 잠금", g_spray_s, g_wi.P.spray_lock);
     model_ack("spray", m);
@@ -255,17 +266,20 @@ static void infer_publish_decision(const wi_decision_t &D)
   char js[INFER_MSG_MAX];
   const char *st = infer_state(D.top);
   bool scent = (D.top >= 0 && !g_wi.M.c[D.top].on);
+  /* 지금 뿌리는 향 (SPRAY <초> <이름> 으로 받은 것, 뿌리는 동안만) — 향 이름은 센서 추정보다 이게 정확하다 */
+  const char *spraying = (g_spray_name[0] && g_wi.sec_now < g_spray_until) ? g_spray_name : "";
   snprintf(js, sizeof(js),
            "{\"device_id\":\"%s\",\"src\":\"ward\",\"model\":\"%s\",\"uptime_s\":%lu,"
-           "\"state\":\"%s\",\"label\":\"%s\",\"label_note\":\"%s\",\"mag\":%.3f,"
+           "\"state\":\"%s\",\"label\":\"%s\",\"label_note\":\"%s\",\"mag\":%.3f,\"strength_pct\":%d,"
            "\"votes\":%d,\"n\":%d,\"purifier\":\"%s\",\"event\":\"%s\","
-           "\"alert\":{\"malodor\":%s},\"baseline_age_s\":%.0f}",
+           "\"alert\":{\"malodor\":%s},\"spraying\":\"%s\",\"baseline_age_s\":%.0f}",
            DEVICE_ID, g_wi.M.id, (unsigned long)(millis() / 1000),
            st, wi_label_name(&g_wi, D.top), scent ? "추정" : "", isfinite(D.mag) ? D.mag : -1.0f,
+           wi_strength_pct(&g_wi.M, D.mag),
            D.k, D.n, D.purifier ? "on" : "off",
            D.event == 1 ? "ON" : (D.event == 2 ? "OFF" : ""),
            (D.purifier && (D.top == WI_UNKNOWN || (D.top >= 0 && g_wi.M.c[D.top].on))) ? "true" : "false",
-           g_wi.sec_now - g_wi.base_sec);
+           spraying, g_wi.sec_now - g_wi.base_sec);
   infer_push(js);
   /* 시리얼에도 한 줄 ('#' 로 시작해서 capture_serial.py 의 CSV 에는 안 섞임) */
   Serial.print(F("# I ")); Serial.print(D.sec, 1); Serial.print(' ');

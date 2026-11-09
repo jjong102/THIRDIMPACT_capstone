@@ -74,6 +74,7 @@ EX void  we_set_baseline(void *S, float win) { wi_set_baseline((wi_state_t *)S, 
 EX void  we_note_spray(void *S, float sec, float dur) { wi_note_spray((wi_state_t *)S, sec, dur); }
 EX void  we_set_lock(void *S, float until) { ((wi_state_t *)S)->lock_until = until; }
 EX float we_lock(void *S) { return ((wi_state_t *)S)->lock_until; }
+EX int   we_strength(void *S, float mag) { return wi_strength_pct(&((wi_state_t *)S)->M, mag); }
 """
 
 Decision = namedtuple("Decision", "sec top k n mag purifier event rebased")
@@ -140,6 +141,8 @@ def _load():
     L.we_set_baseline.argtypes = [vp, f]
     L.we_note_spray.argtypes = [vp, f, f]
     L.we_set_lock.argtypes = [vp, f]
+    L.we_strength.restype = i
+    L.we_strength.argtypes = [vp, f]
     _lib = L
     return L
 
@@ -252,6 +255,10 @@ class WardEngine:
 
     def set_lock(self, until):
         self.L.we_set_lock(self.S, until)
+
+    def strength_pct(self, mag):
+        """냄새 세기 % (0 = Air 문턱, 100 = |Δ| 1.0) — 와드 JSON 의 strength_pct 와 같은 계산(ward_infer.h)."""
+        return int(self.L.we_strength(self.S, float(mag)))
 
     @property
     def lock_until(self):

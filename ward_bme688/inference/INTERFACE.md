@@ -44,8 +44,8 @@ QoS 0, retained 아님. **60초 동안 `inference_ward` 가 없으면 "와드 �
 
 ```json
 {"device_id":"ward-01","src":"ward","model":"75b9571e24","uptime_s":812,
- "state":"MALODOR","label":"Vinegar","label_note":"","mag":0.448,"votes":8,"n":8,
- "purifier":"on","event":"ON","alert":{"malodor":true},"baseline_age_s":420}
+ "state":"MALODOR","label":"Vinegar","label_note":"","mag":0.448,"strength_pct":28,"votes":8,"n":8,
+ "purifier":"on","event":"ON","alert":{"malodor":true},"spraying":"","baseline_age_s":420}
 ```
 예열 중(기준선 전)에는 짧은 형식만 온다: `{"device_id":"ward-01","src":"ward","model":"75b9571e24","uptime_s":40,"state":"WARMUP"}`
 
@@ -55,7 +55,9 @@ QoS 0, retained 아님. **60초 동안 `inference_ward` 가 없으면 "와드 �
 | `state` | `WARMUP` `CLEAN` `SCENT` `MALODOR` `UNKNOWN` `HOLD` | 화면 큰 글씨: 준비 중 / 깨끗함 / 향기 / 악취 / 모르는 냄새 / 약함(보류) |
 | `label` | `Air` `Lavender` `Orange` `Peppermint` `Vinegar` `Unknown` `Weak` | 표결 1등 이름 |
 | `label_note` | `"추정"` 또는 `""` | 향 이름은 서로 비슷해 자주 바뀜 → `SCENT` 면 "(추정)" 을 붙이거나 **분무한 채널 이름**을 띄운다 |
-| `mag` | 0.0 ~ 약 1.5 (`-1` = 계산 불가) | 냄새 세기. 0.3 이상이어야 이름을 판정 |
+| `mag` | 0.0 ~ 약 1.5 (`-1` = 계산 불가) | 냄새 세기(원래 값). 0.3 이상이어야 이름을 판정 |
+| `strength_pct` | 0 ~ 100 | **화면용 세기 %** — 0 = 깨끗한 공기 경계(τ_air 0.228), 100 = \|Δ\| 1.0(데모 위치에서 세 향을 진하게 뿌렸을 때). 상대 세기이지 농도(ppm)가 아니다 (11/09~ 펌웨어) |
+| `spraying` | `"peppermint"` 등 / `""` | **지금 뿌리는 향** — `SPRAY <초> <이름>` 으로 받은 이름, 뿌리는 동안만. 향 이름은 센서 추정보다 이게 정확하다 |
 | `votes` / `n` | 0~8 / 8 | 센서 8개 중 `label` 에 표를 준 수 (신뢰도) |
 | `purifier` | `"on"` / `"off"` | 와드가 **권하는** 청정기 상태 (실제 제어는 UI Jetson) |
 | `event` | `"ON"` / `"OFF"` / `""` | **바뀌는 순간에만** 값이 있다. `ON` = 출동 신호, `OFF` = 공기 회복 |
@@ -76,6 +78,13 @@ QoS 0, retained 아님. **60초 동안 `inference_ward` 가 없으면 "와드 �
 | `Unknown` | `odor` | 처음 보는 냄새 (출동 쪽) | — |
 | `Weak` | (표시 유지) | 약한 신호 | — |
 
+**추천 화면** — 향 이름은 센서 추정(우리 향 3종은 방향 1~4° 차이, 이름 정답률 27~92%)이라 확률 %를 붙이지 않는다.
+```
+향기 감지 · 세기 ███████░░░ 70%          ← strength_pct
+지금 뿌리는 향: 페퍼민트                  ← spraying (없으면 "페퍼민트(추정)" = label + label_note)
+악취 감지(식초) · 세기 ████████░░ 85%     ← state MALODOR
+```
+
 > ⚠ 예전 대시보드 센서(옛 분류 펌웨어)는 `lavender`/`floral` 을 "시연에선 악취" 로 썼다. 새 와드에서는 **라벤더 = 우리 향(청정기 끔), 악취 = 식초**다.
 > 판정은 `state` 로 하고(`SCENT` = 향기, `MALODOR`/`UNKNOWN` = 악취 쪽), 이름은 표시용으로만 쓴다.
 
@@ -86,7 +95,7 @@ QoS 0, retained 아님. **60초 동안 `inference_ward` 가 없으면 "와드 �
 | 토픽 | 내용 | 상태 |
 |---|---|---|
 | `diffuser/ward-01/cmd` | `REBASE` (기준선 다시) / `REBOOT` — retained 금지 | 구현됨 (`tools/ward_view.py --rebase`) |
-| `diffuser/ward-01/cmd` | `SPRAY <초>` — "지금부터 N초 향을 뿌린다" → 와드가 뿌리는 동안 + 끝나고 3분, 모르는 냄새로는 출동 안 함 (확실한 악취 클래스로만). 답장 `result:"spray"` | 구현됨 (11/09, 와드 업로드 필요) · 시험 `ward_view.py --spray 90` |
+| `diffuser/ward-01/cmd` | `SPRAY <초> [이름]` (예 `SPRAY 90 peppermint`) — "지금부터 N초 향을 뿌린다" → 와드가 뿌리는 동안 + 끝나고 3분, 모르는 냄새로는 출동 안 함 (확실한 악취 클래스로만). 답장 `result:"spray"` | 구현됨 (11/09, 와드 업로드 필요) · 시험 `ward_view.py --spray 90` |
 | `diffuser/ward-01/model` | 새 모델 (retained, CRC) | 구현됨 (`tools/push_model.py`) |
 
 ## 2. 출동 흐름 (화면이 맡음)

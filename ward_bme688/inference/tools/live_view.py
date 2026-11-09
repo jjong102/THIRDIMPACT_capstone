@@ -371,7 +371,15 @@ class View:
         D = self.dec
         self.ptext.set_fontsize(20)
         col = C_UP if D.top == self.air_label else ("#8A6A14" if D.top == "Unknown" else C_DOWN)
-        self.ptext.set_text(f"판정: {D.top}  {D.k}/{D.n}" + ("  · 청정기 ON" if D.purifier else ""))
+        pct = self.eng.strength_pct(D.mag)
+        name = {"Peppermint": "페퍼민트(추정)", "Lavender": "라벤더(추정)", "Orange": "오렌지(추정)",
+                "Vinegar": "악취(식초)", "Unknown": "모르는 냄새", "Air": "깨끗함", "Weak": "약함"}.get(D.top, D.top)
+        bar = "■" * round(pct / 10) + "□" * (10 - round(pct / 10))   # █░ 는 맑은 고딕에 없어 네모로 깨짐
+        lines = [f"{name}  {D.k}/{D.n}", f"세기 {bar} {pct}%"]
+        if D.purifier:
+            lines.append("청정기 ON")
+        self.ptext.set_text("\n".join(lines))
+        self.ptext.set_fontsize(16)
         self.ptext.set_color(col)
 
     def redraw(self):

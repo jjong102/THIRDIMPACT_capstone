@@ -199,6 +199,16 @@ static inline int wi_predict(const wi_model_t *M, const float *d, float *mag_out
   return bang <= M->c[best].angle_thr ? best : WI_UNKNOWN;
 }
 
+/* 냄새 세기 % (화면 표시용). 0% = Air 문턱(tau_air), 100% = WI_STRENGTH_FULL.
+   100% 기준 |Δ| 1.0 = 11/05 데모 위치에서 세 향을 진하게 뿌렸을 때(0.98~1.22). 상대 세기이지 농도(ppm)가 아니다. */
+#define WI_STRENGTH_FULL 1.0f
+static inline int wi_strength_pct(const wi_model_t *M, float mag) {
+  float r;
+  if (!isfinite(mag) || mag <= M->tau_air) return 0;
+  r = (mag - M->tau_air) / (WI_STRENGTH_FULL - M->tau_air);
+  return r >= 1.0f ? 100 : (int)(r * 100.0f + 0.5f);
+}
+
 static inline int wi_is_on(const wi_model_t *M, int lab) { return lab == WI_UNKNOWN || (lab >= 0 && M->c[lab].on); }
 static inline int wi_is_off_class(const wi_model_t *M, int lab) { return lab >= 0 && !M->c[lab].on; }
 
