@@ -20,6 +20,8 @@
 
 그래서 **노트북에서 녹화를 재생한 결과가 곧 와드 동작**이다(재생 805판정 100% 동일).
 
+**대시보드·주행 Jetson 과의 연동 형식은 [INTERFACE.md](INTERFACE.md)** (MQTT 판정 JSON, ROS 2 `/ward/decision`·`/ward/event`, 출동 흐름).
+
 > 원시 녹화·라벨 데이터(`training/`)와 자격증명(`secrets.h`)은 저장소에 올리지 않는다.
 > 이전 `ward_bme688/firmware/*`(HP-354 히터, BSEC 분류)와는 **히터 설정이 달라 데이터가 호환되지 않는다.**
 

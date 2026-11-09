@@ -1,0 +1,124 @@
+# WARD 연동 규격 — 와드 ↔ UI Jetson ↔ 주행 Jetson
+
+와드 판정을 대시보드·주행에 잇기 위한 **메시지 형식 약속**이다. (2026-11-09 확정, 구현은 이 문서를 따른다)
+결정: **MQTT → ROS 2 토픽으로 넘기고(ward_bridge_node), 출동 시작은 지금 화면 흐름(`useScentMissionNav`)이 맡는다.**
+
+## 0. 전체 구조
+
+```
+                         핫스팟 / 인터넷
+ [와드 ward-01] ──MQTT(TLS 8883)──▶ HiveMQ ◀──MQTT── [UI Jetson 192.168.10.1]  키오스크 7"
+  BME688 x8 + ESP32 (배터리)                            │  React 대시보드 + server/*_bridge.py
+  온디바이스 판정 (firmware/ward)                        │  Arduino(USB) = 청정기 FAN + 초음파 발향 MIST1~3
+                                                        │      ← fragrance_bridge (HTTP 5174)
+                                                        │  ★ ward_bridge_node (ROS 2, 이 문서 3장)
+                                                        │
+                                                        │ 유선 LAN enP8p1s0 · ROS 2 Humble · CycloneDDS(유니캐스트)
+                                                        ▼
+                                          [주행 Jetson 192.168.10.2]  slam_ros: SLAM · Nav2 · AMCL
+                                           /goal_pose · /amcl_pose · /diffusion_complete …
+```
+
+| 구간 | 수단 | 누가 |
+|---|---|---|
+| 와드 → UI Jetson | MQTT (HiveMQ 클라우드) | 와드 펌웨어 → `ward_bridge_node` |
+| UI Jetson 안 | ROS 2 토픽 / HTTP(로컬) | `ward_bridge_node` → `ros_nav_bridge`(5179) → React |
+| UI Jetson ↔ 주행 Jetson | ROS 2 (DDS, 유선) | `ros_nav_bridge` ↔ Nav2 |
+| UI Jetson → 청정기·발향 | USB 시리얼 | `fragrance_bridge`(5174) → Arduino |
+
+## 1. MQTT — 와드가 보내는 것 (구현됨)
+
+| 토픽 | 언제 | 내용 |
+|---|---|---|
+| `diffuser/ward-01/inference_ward` | **판정마다 약 10초** (예열 중엔 10초마다 WARMUP) | 판정 JSON (아래) — **연동은 이것만 쓰면 된다** |
+| `diffuser/ward-01/sensor` | 약 1초 | 원시 측정 CSV (녹화·분석용, 연동에는 안 씀) |
+| `diffuser/ward-01/model/ack` | 모델·명령 받았을 때 | `{"result":"ok\|same\|error\|reset\|rebase\|reboot", "model":…, "msg":…}` |
+
+QoS 0, retained 아님. **60초 동안 `inference_ward` 가 없으면 "와드 연결 끊김"** 으로 본다.
+
+### 1-1. `inference_ward` 판정 JSON
+
+```json
+{"device_id":"ward-01","src":"ward","model":"75b9571e24","uptime_s":812,
+ "state":"MALODOR","label":"Vinegar","label_note":"","mag":0.448,"votes":8,"n":8,
+ "purifier":"on","event":"ON","alert":{"malodor":true},"baseline_age_s":420}
+```
+예열 중(기준선 전)에는 짧은 형식만 온다: `{"device_id":"ward-01","src":"ward","model":"75b9571e24","uptime_s":40,"state":"WARMUP"}`
+
+| 필드 | 값 | 뜻 · 쓰는 법 |
+|---|---|---|
+| `device_id` | `"ward-01"` | 와드 이름. 방 지도의 `sensor_id` 와 짝 (3-2) |
+| `state` | `WARMUP` `CLEAN` `SCENT` `MALODOR` `UNKNOWN` `HOLD` | 화면 큰 글씨: 준비 중 / 깨끗함 / 향기 / 악취 / 모르는 냄새 / 약함(보류) |
+| `label` | `Air` `Lavender` `Orange` `Peppermint` `Vinegar` `Unknown` `Weak` | 표결 1등 이름 |
+| `label_note` | `"추정"` 또는 `""` | 향 이름은 서로 비슷해 자주 바뀜 → `SCENT` 면 "(추정)" 을 붙이거나 **분무한 채널 이름**을 띄운다 |
+| `mag` | 0.0 ~ 약 1.5 (`-1` = 계산 불가) | 냄새 세기. 0.3 이상이어야 이름을 판정 |
+| `votes` / `n` | 0~8 / 8 | 센서 8개 중 `label` 에 표를 준 수 (신뢰도) |
+| `purifier` | `"on"` / `"off"` | 와드가 **권하는** 청정기 상태 (실제 제어는 UI Jetson) |
+| `event` | `"ON"` / `"OFF"` / `""` | **바뀌는 순간에만** 값이 있다. `ON` = 출동 신호, `OFF` = 공기 회복 |
+| `alert.malodor` | `true` / `false` | 켜진 상태이고 지금 판정이 악취·모르는 냄새면 true → 빨간 배너 |
+| `model` | 10자리 | 와드가 쓰는 모델 id |
+| `uptime_s` | 초 | 와드 켜진 시간. **줄어들면 재부팅** |
+| `baseline_age_s` | 초 | 기준선(깨끗한 공기)을 잡은 지 몇 초 |
+
+출동 규칙(와드 안에서 판정): 악취·모르는 냄새 **3번 연속(약 30초) → `event:"ON"`**. 향·깨끗함이 12번 연속 + 켠 지 3분 → `event:"OFF"`. 향·약함은 출동시키지 않는다.
+
+### 1-2. MQTT — 와드로 보내는 것
+
+| 토픽 | 내용 | 상태 |
+|---|---|---|
+| `diffuser/ward-01/cmd` | `REBASE` (기준선 다시) / `REBOOT` — retained 금지 | 구현됨 (`tools/ward_view.py --rebase`) |
+| `diffuser/ward-01/cmd` | `SPRAY <초>` — "지금부터 N초 향을 뿌린다" → 와드가 뿌리는 동안 + 끝나고 3분, 모르는 냄새로는 출동 안 함 | **예정** (와드 펌웨어 추가 필요, 판정 코드에는 이미 있음) |
+| `diffuser/ward-01/model` | 새 모델 (retained, CRC) | 구현됨 (`tools/push_model.py`) |
+
+## 2. 출동 흐름 (화면이 맡음)
+
+```
+와드 event:"ON" ─▶ ward_bridge_node ─/ward/event─▶ ros_nav_bridge ─HTTP─▶ React useScentMissionNav
+   → 그 와드의 방(room.sensor_id == device_id)으로 goal_pose            (UI → 주행 Jetson, ROS 2)
+   → 도착 → fragrance_bridge: 청정기 ON + 발향                          (UI → Arduino)
+          (예정) 같은 때 MQTT cmd "SPRAY <초>" → 와드 재출동 방지
+   → 발향 끝 → /api/nav/diffusion_complete → /diffusion_complete       (주행 Jetson 회전 멈춤)
+와드 event:"OFF" ─▶ 화면: "공기 회복" 표시 (청정기 끄는 시점은 화면 흐름이 정함)
+```
+- 이미 출동 중(`isNavigating`)이면 새 `ON` 은 무시한다 (와드 하나 기준).
+- `ON` 은 놓치면 다시 안 온다(바뀔 때만) → 화면이 늦게 켜졌으면 `/api/ward/state` 의 최근 `purifier:"on"` 으로 보완할 수 있다.
+
+## 3. ROS 2 — `ward_bridge_node` (UI Jetson, **구현 예정**)
+
+GDM 패키지의 `MQTT_sub_node` 를 새 와드 형식에 맞게 고치거나 같은 자리에 새로 둔다.
+
+| 항목 | 값 |
+|---|---|
+| 구독 (MQTT) | `diffuser/+/inference_ward` (와드가 늘어도 그대로) — 자격증명은 이 노드만 (`MQTT_BROKER/USER/PASS`) |
+| 발행 1 | **`/ward/decision`** `std_msgs/String` — 판정마다. QoS reliable, depth 10 |
+| 발행 2 | **`/ward/event`** `std_msgs/String` — `event` 가 `ON`/`OFF` 일 때만. QoS reliable, depth 10, **volatile**(늦게 켜진 노드가 지난 `ON` 을 받아 엉뚱하게 출동하지 않게) |
+
+### 3-1. 메시지 내용 (JSON 문자열)
+`/ward/decision` = 와드 JSON 그대로 + 세 필드:
+```json
+{ …와드 JSON 전부…, "ward_id":"ward-01", "room_id":"room_1", "rx_time":"2026-11-09T15:36:22+09:00" }
+```
+`/ward/event` = 출동 판단에 필요한 것만:
+```json
+{"ward_id":"ward-01","room_id":"room_1","event":"ON","state":"MALODOR","label":"Vinegar",
+ "mag":0.448,"votes":8,"n":8,"uptime_s":812,"rx_time":"2026-11-09T15:36:22+09:00"}
+```
+
+### 3-2. 와드 → 방
+방 지도(`GDM/floor_plan/*_rooms_confirmed.json`)의 각 방에 이미 있는 **`sensor_id` 칸에 와드 이름**(`"ward-01"`)을 적는다.
+`room_id` = `sensor_id == device_id` 인 방의 `id`. 못 찾으면 `room_id: null` (화면은 "방 미지정" 표시, 출동 안 함).
+
+### 3-3. `ros_nav_bridge` 에 더할 것 (화면용 HTTP, 구현 예정)
+| 경로 | 내용 |
+|---|---|
+| `GET /api/ward/state` | 와드별 최근 `/ward/decision` + 마지막 수신 시각 (60초 넘으면 `stale:true`) |
+| `GET /api/ward/events?since=<ms>` | 그 뒤의 `/ward/event` 목록 (화면이 1초마다 물어봄) |
+
+## 4. 아직 정할 것
+- [ ] 출동 뒤 청정기를 끄는 시점: 와드 `OFF` / 발향 끝 / 고정 시간 중 무엇
+- [ ] `SPRAY <초>` 를 누가 보내나: `fragrance_bridge` (발향 명령과 같은 자리) 권장
+- [ ] 와드가 여러 개일 때 동시 출동 순서
+- [ ] 예전 `sensor/air_quality` → `/scent/raw` 경로(옛 와드 형식)는 새 와드로 바뀐 뒤 정리
+
+---
+와드 쪽 코드·판정 원리는 [README.md](README.md), 판정 규칙은 `firmware/ward/ward_infer.h`.
