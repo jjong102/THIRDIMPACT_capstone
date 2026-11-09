@@ -7,7 +7,7 @@ update_model.py
   2. 성능 검사    replay_eval: 녹화 하나씩 빼고 학습 → 판정기 재생 → 악취 출동률·잘못 출동 횟수
                  (판정기 = ward_engine = 와드 펌웨어의 ward_infer.h 그대로 → 이 숫자가 곧 와드 동작)
   3. 펌웨어 검사  firmware_parity: model.h 컴파일 + 무선 모델 읽기 시험 + 엔진 == 펌웨어 시험 프로그램
-  4. 통과하면     이전 모델을 inference/model_history/ 에 보관 → 새 모델로 교체 → model.h 다시 생성
+  4. 통과하면     이전 모델을 model/history/ 에 보관 → 새 모델로 교체 → model.h 다시 생성
   5. (--push)    MQTT 로 와드에 바로 보냄 (push_model.py) — 펌웨어 다시 올릴 필요 없음
 
 통과 기준 (바꿀 수 있음): 악취 출동 ≥ 90% · 잘못 출동 ≤ 시간당 1번 · 무선 모델 읽기 정상.
@@ -38,12 +38,12 @@ except (AttributeError, OSError):
     pass
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from paths import DATA, MODEL                              # noqa: E402
+from paths import DATA, MODEL, MODEL_HISTORY               # noqa: E402
 from open_set import load_dir, fit, AIR                    # noqa: E402
 from export_model import export, model_id                  # noqa: E402
 import replay_eval                                          # noqa: E402
 
-HISTORY = MODEL.parent / "model_history"
+HISTORY = MODEL_HISTORY
 FIT_ARGS = dict(tau_mode="segment", decide_min=0.3)        # 수집_가이드·CLAUDE.md 의 기본 학습 설정
 
 
@@ -163,6 +163,9 @@ def main():
             r = firmware_parity.run(None, tmp_model, verbose=False)
             print(f"  컴파일 ✓ · 무선 모델 읽기 {'정상' if r['parser_ok'] else '✗ 이상'} · "
                   f"엔진 == 펌웨어 {'같음' if r['engine_same'] else '✗ 다름'} ({r['rounds']}판정)")
+            print(f"  히터 {'✓' if r['heater_ok'] else '✗'} {r['heater_msg']}")
+            if not r["heater_ok"]:
+                problems.append("히터 설정이 펌웨어와 파이썬에서 다름 — 데이터를 쓸 수 없음")
             if not r["engine_same"]:
                 problems.append("엔진과 펌웨어 시험 프로그램 판정이 다름 (빌드 설정 확인)")
             if not r["parser_ok"]:
@@ -194,7 +197,7 @@ def main():
         step(5, "와드로 무선 전송")
         push(new, args)
     else:
-        print("\n다음: 와드에 반영하려면  python push_model.py  (무선)  또는  Arduino IDE 로 ward_mqtt 업로드")
+        print("\n다음: 와드에 반영하려면  python push_model.py  (무선)  또는  Arduino IDE 로 firmware/ward 업로드")
 
 
 if __name__ == "__main__":

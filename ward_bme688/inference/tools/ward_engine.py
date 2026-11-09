@@ -46,6 +46,11 @@ EX void *we_new(int on_cycles, int off_cycles, float min_on, float warmup, float
   if (S) wi_init(S, P);
   return S;
 }
+EX void  we_defaults(float *f, int *i) {            /* wi_default_params() — PC 도구 기본값의 유일한 출처 */
+  wi_params_t P = wi_default_params();
+  i[0] = P.on_cycles; i[1] = P.off_cycles; i[2] = P.rebase_weak;
+  f[0] = P.min_on; f[1] = P.warmup; f[2] = P.flat; f[3] = P.track; f[4] = P.rebase; f[5] = P.spray_lock; f[6] = P.stuck_rebase;
+}
 EX void  we_free(void *S) { free(S); }
 EX int   we_set_model(void *S_, const char *txt, int len, char *err, int errlen) {
   wi_state_t *S = (wi_state_t *)S_; wi_model_t M;
@@ -116,6 +121,7 @@ def _load():
     L.we_new.restype = vp
     L.we_new.argtypes = [i, i, f, f, f, f, f, i, f, f]
     L.we_free.argtypes = [vp]
+    L.we_defaults.argtypes = [ctypes.POINTER(f), ctypes.POINTER(i)]
     L.we_set_model.restype = i
     L.we_set_model.argtypes = [vp, cp, i, cp, i]
     L.we_feed.restype = i
@@ -138,6 +144,40 @@ def _load():
     return L
 
 
+def defaults():
+    """판정 파라미터 기본값 — ward_infer.h 의 wi_default_params() 에서 읽는다 (파이썬에 숫자를 따로 적지 않음)."""
+    L = _load()
+    fv, iv = (ctypes.c_float * 7)(), (ctypes.c_int * 3)()
+    L.we_defaults(fv, iv)
+    return dict(on_cycles=iv[0], off_cycles=iv[1], rebase_weak=bool(iv[2]),
+                min_on=round(fv[0], 4), warmup=round(fv[1], 4), flat=round(fv[2], 4), track=round(fv[3], 4),
+                rebase=round(fv[4], 4), spray_lock=round(fv[5], 4), stuck_rebase=round(fv[6], 4))
+
+
+def add_param_args(ap):
+    """ward_controller·replay_eval 공용 옵션. 기본값은 와드 펌웨어(ward_infer.h)와 같다."""
+    d = defaults()
+    ap.add_argument("--on-cycles", type=int, default=d["on_cycles"], help="켬 쪽 판정이 이만큼 연속이면 출동")
+    ap.add_argument("--off-cycles", type=int, default=d["off_cycles"], help="끔 쪽 판정이 이만큼 연속이면 끔")
+    ap.add_argument("--min-on", type=float, default=d["min_on"], help="켠 뒤 최소 유지 초")
+    ap.add_argument("--warmup", type=float, default=d["warmup"], help="이 시간(초) 전에는 기준선을 잡지 않음")
+    ap.add_argument("--flat", type=float, default=d["flat"], help="평평함 기준: 8센서 평균선 변동폭")
+    ap.add_argument("--track", type=float, default=d["track"], help="Air 일 때 기준선 추종 비율 (0 끔)")
+    ap.add_argument("--rebase", type=float, default=d["rebase"],
+                    help="청정기 꺼진 채 Air 가 이 시간(초) 평평하면 기준선 다시 (0 끔)")
+    ap.add_argument("--rebase-weak", action="store_true", default=d["rebase_weak"], help="보류(Weak)에서도 기준선 다시")
+    ap.add_argument("--stuck-rebase", type=float, default=d["stuck_rebase"],
+                    help="청정기 켜진 채 켬 쪽이 이 시간(초, 라운드 수로 셈) 평평하면 기준선 다시 (0 끔)")
+    ap.add_argument("--spray-lock", type=float, default=d["spray_lock"],
+                    help="스스로 향을 뿌린 뒤 이 시간(초) 동안 Unknown 으로는 켜지 않음 (0 끔)")
+
+
+def engine_kwargs(args):
+    return dict(on_cycles=args.on_cycles, off_cycles=args.off_cycles, min_on=args.min_on, warmup=args.warmup,
+                flat=args.flat, track=args.track, rebase=args.rebase, rebase_weak=args.rebase_weak,
+                spray_lock=args.spray_lock, stuck_rebase=args.stuck_rebase)
+
+
 def parse_row(line):
     """녹화 CSV 한 줄 → (t_ms, 센서, 가스저항, 단계, valid). 와드 펌웨어·시험 프로그램과 같은 11칸 형식."""
     if not line or line[0] in "#T":
@@ -154,11 +194,12 @@ def parse_row(line):
 class WardEngine:
     """와드 판정 상태 1개. 파라미터 이름은 ward_controller.py 옵션과 같다."""
 
-    def __init__(self, model, on_labels, on_cycles=3, off_cycles=12, min_on=180.0, warmup=60.0, flat=0.05,
-                 track=0.02, rebase=180.0, rebase_weak=False, spray_lock=180.0, stuck_rebase=60.0):
+    def __init__(self, model, on_labels, **params):
+        """params: defaults() 의 이름들. 안 준 것은 와드 펌웨어 기본값."""
         self.L = _load()
-        self.S = self.L.we_new(on_cycles, off_cycles, min_on, warmup, flat, track, rebase,
-                               int(bool(rebase_weak)), spray_lock, stuck_rebase)
+        p = {**defaults(), **params}
+        self.S = self.L.we_new(p["on_cycles"], p["off_cycles"], p["min_on"], p["warmup"], p["flat"], p["track"],
+                               p["rebase"], int(bool(p["rebase_weak"])), p["spray_lock"], p["stuck_rebase"])
         if not self.S:
             raise MemoryError("판정 상태를 만들지 못했습니다")
         self.set_model(model, on_labels)
@@ -225,6 +266,7 @@ if __name__ == "__main__":                       # 빌드 확인: python ward_en
         pass
     from paths import MODEL
     print(f"[엔진] {_build()}")
+    print(f"[기본값] {defaults()}")
     if len(sys.argv) > 1:
         m = json.loads(MODEL.read_text(encoding="utf-8"))
         e = WardEngine(m, m.get("on_labels", ["Coffee", "Vinegar"]))

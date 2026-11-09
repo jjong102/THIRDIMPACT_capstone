@@ -3,8 +3,8 @@
 export_model.py
 open_set.py fit 이 만든 판정 모델(json)을 와드 펌웨어가 쓰는 두 가지 형태로 바꾼다.
 
-  inference/openset_model.json
-     ├──▶ inference/firmware/ward_mqtt/model.h   펌웨어에 고정되는 "기본 모델" (업로드할 때 들어감)
+  model/openset_model.json
+     ├──▶ firmware/ward/model.h   펌웨어에 고정되는 "기본 모델" (업로드할 때 들어감)
      └──▶ 글자 형식 (model_text)                  MQTT 로 와드에 바로 보내는 모델 (tools/push_model.py)
 
 모델은 "클래스마다 평균 방향(숫자 10개) + 허용 각도" 와 문턱 두 개뿐이라 그대로 옮기면 된다.
@@ -46,7 +46,9 @@ def cfloat(x):
 
 
 def model_id(model):
-    raw = json.dumps(model, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    """내용으로 정하는 id — 학습 시각(created)은 빼서 같은 데이터·설정이면 같은 id."""
+    raw = json.dumps({k: v for k, v in model.items() if k != "created"}, sort_keys=True,
+                     ensure_ascii=False).encode("utf-8")
     return hashlib.sha1(raw).hexdigest()[:10]
 
 

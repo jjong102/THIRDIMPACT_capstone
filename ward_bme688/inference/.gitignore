@@ -1,8 +1,17 @@
-# 원시 녹화·라벨 데이터는 커밋하지 않는다 (용량, 개인 환경 정보)
-training/
+# 원시 녹화·라벨 데이터 (용량, 커밋 금지 — CLAUDE.md)
+training/recordings/
+training/data/
 
-# 자격증명
+# 자격증명 (secrets.h.example 만 커밋)
 **/secrets.h
 
-# PC 판정 엔진 빌드 결과 (ward_engine.py 가 자동 생성)
+# Arduino 라이브러리 (Bosch BSEC 라이선스, 용량) — 스케치북 위치에 따로 둔다
+libraries/
+
+# 빌드·캐시
 tools/.ward_engine/
+__pycache__/
+*.pyc
+
+# 데이터시트 (Bosch 배포물, 재배포 안 함)
+docs/bst-bme688-ds000.pdf

@@ -39,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from paths import DATA, RECORDINGS                       # noqa: E402
 from open_set import load_dir, fit, AIR                   # noqa: E402
 from ward_controller import Controller                    # noqa: E402
+from ward_engine import add_param_args, engine_kwargs      # noqa: E402
 
 
 def segments(data_dir, rec_path, rec):
@@ -57,11 +58,7 @@ SCENTS = ("Peppermint", "Lavender", "Orange", "Water")
 
 def run_controller(model, rec_path, args, sprays=()):
     """sprays: [(시작초, 길이초)] — 시스템이 스스로 향을 뿌린 때 (재생에서는 향 라벨 구간으로 대신)."""
-    ns = argparse.Namespace(on=args.on, on_cycles=args.on_cycles, off_cycles=args.off_cycles,
-                            min_on=args.min_on, warmup=args.warmup, flat=args.flat,
-                            base_at=None, track=args.track, rebase=args.rebase,
-                            rebase_weak=args.rebase_weak, stuck_rebase=args.stuck_rebase,
-                            spray_lock=args.spray_lock, on_cmd="ON000", verbose=False)
+    ns = argparse.Namespace(on=args.on, base_at=None, on_cmd="ON000", verbose=False, **engine_kwargs(args))
     c = Controller(model, ns, send=False)
     pending = sorted(sprays)
     with contextlib.redirect_stdout(io.StringIO()):
@@ -89,17 +86,7 @@ def parser():
     ap.add_argument("--on", nargs="*", default=["Coffee", "Vinegar"], help="출동해야 하는 라벨")
     ap.add_argument("--tau-mode", default="segment")
     ap.add_argument("--decide-min", type=float, default=0.3)
-    ap.add_argument("--on-cycles", type=int, default=3)
-    ap.add_argument("--off-cycles", type=int, default=12)
-    ap.add_argument("--min-on", type=float, default=180.0)
-    ap.add_argument("--warmup", type=float, default=60.0)
-    ap.add_argument("--flat", type=float, default=0.05)
-    ap.add_argument("--track", type=float, default=0.02)
-    ap.add_argument("--rebase", type=float, default=180.0, help="평평한 Air/보류 N초면 기준선 다시 잡기 (0 끔)")
-    ap.add_argument("--rebase-weak", action="store_true", help="보류(Weak)에서도 기준선 다시 잡기")
-    ap.add_argument("--stuck-rebase", type=float, default=60.0, help="켜진 채 켬 쪽이 N초 평평하면 기준선 다시 (0 끔)")
-    ap.add_argument("--spray-lock", type=float, default=180.0,
-                    help="향 라벨 구간을 '스스로 뿌림'으로 보고, 끝난 뒤 N초까지 Unknown 으로 안 켬 (0 끔)")
+    add_param_args(ap)   # --on-cycles … --spray-lock (기본값 = 와드 펌웨어). 향 라벨 구간은 '스스로 뿌림'으로 보고 --spray-lock 적용
     ap.add_argument("--hit-before", type=float, default=30.0, help="악취 구간 시작 몇 초 전 ON 까지 성공으로 칠지")
     ap.add_argument("--hit-after", type=float, default=60.0, help="악취 구간 끝 몇 초 뒤 ON 까지 성공으로 칠지")
     ap.add_argument("-v", "--verbose", action="store_true")

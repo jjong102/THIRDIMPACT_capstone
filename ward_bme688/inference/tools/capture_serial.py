@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 capture_serial.py
-학습 펌웨어(training/firmware/ward_usb)의 시리얼 출력을 그대로 CSV 로 녹화한다.
+와드 펌웨어(firmware/ward, USB 연결)의 시리얼 출력을 그대로 CSV 로 녹화한다.
 (SD카드 없이 노트북 직결 수집. 녹화 후 label_tool.py 로 구간을 잘라 라벨링)
 
   '#' 로 시작하는 안내 줄은 버리고, 헤더 + 데이터 행만 파일로 저장한다.
@@ -39,7 +39,7 @@ try:
 except ImportError:          # mqtt_capture.py 가 이 파일의 함수만 가져다 쓸 때는 없어도 된다
     serial = None
 
-# 학습 펌웨어(ward_usb) 출력 컬럼 — parse_devkit_csv.py 호환
+# 와드 펌웨어(firmware/ward) 출력 컬럼 — parse_devkit_csv.py 호환
 HEADER = ("TimeStamp(ms),Sensor Index,Temperature(deg C),Pressure(Pa),"
           "Humidity(%),Gas Resistance(ohm),Gas Index,Meas Index,IDAC,"
           "Status,Gas Valid,Heater Stable")
@@ -197,7 +197,7 @@ def main():
         if drops:
             print(f"  (시리얼 끊김 {drops}회 — 해당 구간 데이터 누락 가능)")
         if rows == 0:
-            print("주의: 데이터가 없습니다. 포트/펌웨어(ward_usb)를 확인하세요.")
+            print("주의: 데이터가 없습니다. 포트/펌웨어(firmware/ward)를 확인하세요.")
 
     finish_recording(out_path, rows, live, args)
 

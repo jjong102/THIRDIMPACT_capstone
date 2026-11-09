@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-baseline_correct.py  (v2)
+baseline_correct.py
 세션 드리프트를 Air(무향) 기준선 차감으로 상쇄한다.
 
 === 원리 ===
@@ -8,39 +8,28 @@ MOX 가스센서는 시간이 지나면 지문이 통째로 흘러간다(드리�
 그런데 이 드리프트는 그 시점에 무슨 향이 있든 상관없이 똑같이 작용한다.
 따라서 "같은 시간대의 Air 지문"을 빼주면 드리프트만 소거되고 향 성분이 남는다.
 
-    Woody(1라운드) − Air(1라운드)  ≈  Woody(2라운드) − Air(2라운드)
+    향(1라운드) − Air(1라운드)  ≈  향(2라운드) − Air(2라운드)
                                     ↑ 드리프트 소거
 
 센서 개체차도 함께 사라지므로 센서별로 따로 계산한다.
 
-=== 짝짓기 규칙 (v2) ===
-source_file 하나(= 조각 또는 SD 블록 하나)마다 기준선 Air 를 하나 고른다.
+=== 짝짓기 규칙 ===
+source_file 하나(= 라벨 조각 하나)마다 기준선 Air 를 하나 고른다.
 
   [시리얼 녹화]  rec_날짜_시각_태그__segN.csv  (label_tool.py 가 만든 조각)
     1순위: 같은 녹화 안의 다른 Air 조각 중 시간(t_ms)상 가장 가까운 것
     2순위: 같은 녹화에 Air 가 없으면, 녹화 시작 시각이 가장 가까운 다른 녹화의 Air
            (그 녹화가 앞이면 마지막 Air, 뒤면 첫 Air)
-  [SD 로거]      LOG_0031_Woody.csv
-    파일 번호가 가장 가까운 Air (v1 과 동일)
-
-  v1 은 파일명의 첫 숫자를 세션 번호로 써서, rec_ 형식에서는 날짜(20260929)가
-  번호가 되어 같은 날 조각이 전부 한 세션으로 합쳐지는 버그가 있었다.
 
 Air 조각은 '자기 자신을 뺀' 결과가 정확히 0이 되어 "Air = 원점" 순환논리로
 성능이 부풀려지므로, 자신을 제외한 가장 가까운 다른 Air 를 기준선으로 쓴다.
 
 짝을 못 찾은 행(기준선 Air 없음 / 해당 센서의 Air 없음)은 보정 안 된 값이
-섞이지 않도록 기본적으로 출력에서 뺀다. (--keep-unpaired 로 원본 유지)
+섞이지 않도록 기본적으로 출력에서 뺀다. (keep_unpaired=True 로 원본 유지)
 
-=== 사용법 ===
-  python baseline_correct.py features.csv features_bc.csv
-  python baseline_correct.py features.csv features_bc.csv --air-label Air
-  python train_scent.py features_bc.csv --no-temp-hum
-
-출력에는 baseline_file 컬럼(어떤 Air 를 뺐는지)이 추가된다.
+open_set.py(학습·평가)가 apply_baseline() 을 부른다. 출력에는 baseline_file 컬럼(어떤 Air 를 뺐는지)이 추가된다.
 """
 
-import argparse
 import sys
 
 try:
@@ -96,14 +85,6 @@ def choose_air(target, files):
     pool = files[files["is_air"] & (files["file"] != target["file"])]
     if pool.empty:
         return None, "다른 Air 없음"
-
-    if target["kind"] == "log":
-        cand = pool[pool["kind"] == "log"]
-        if cand.empty:
-            return None, "LOG 형식 Air 없음"
-        d = (cand["seq"] - target["seq"]).abs()
-        best = cand.loc[d.sort_values(kind="stable").index[0]]
-        return best["file"], f"번호차 {int(abs(best['seq'] - target['seq']))}"
 
     if target["kind"] == "rec":
         same = pool[(pool["kind"] == "rec") & (pool["recording"] == target["recording"])]
@@ -202,40 +183,3 @@ def apply_baseline(df, air_label="Air", keep_unpaired=False, log=print):
 
     out = pd.concat(out_parts, ignore_index=True) if out_parts else df.iloc[0:0].copy()
     return out, dropped
-
-
-def main():
-    ap = argparse.ArgumentParser(description="인접 Air 기준선 차감")
-    ap.add_argument("src")
-    ap.add_argument("dst")
-    ap.add_argument("air_label_pos", nargs="?", default=None,
-                    help=argparse.SUPPRESS)          # v1 호환: 세 번째 인자 = Air 라벨
-    ap.add_argument("--air-label", default="Air")
-    ap.add_argument("--keep-unpaired", action="store_true",
-                    help="기준선을 못 찾은 행도 원본 그대로 남김 (기본: 제외)")
-    args = ap.parse_args()
-    air_label = args.air_label_pos or args.air_label
-
-    df = pd.read_csv(args.src)
-    for c in ["source_file", "sensor_index", "label"]:
-        if c not in df.columns:
-            sys.exit(f"필수 컬럼 없음: {c}")
-    GAS = detect_gas_cols(df)
-    print(f"특징 차원: {len(GAS)}" + ("  (히터 설정 4개)" if len(GAS) == 40 else "  (히터 설정 1개)"))
-    try:
-        out, dropped = apply_baseline(df, air_label, args.keep_unpaired)
-    except ValueError as e:
-        sys.exit(str(e))
-    if out.empty:
-        sys.exit("\n보정된 행이 없습니다.")
-    out.to_csv(args.dst, index=False)
-
-    if dropped:
-        print(f"\n제외된 행 {dropped}개 (기준선 없음). 원본으로 남기려면 --keep-unpaired")
-    print(f"\n→ {args.dst} 저장 ({len(out)}행)")
-    print("\n다음 단계:")
-    print(f"  python train_scent.py {args.dst} --no-temp-hum")
-
-
-if __name__ == "__main__":
-    main()

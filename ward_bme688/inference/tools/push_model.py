@@ -3,7 +3,7 @@
 push_model.py
 판정 모델을 **MQTT 로 와드에 바로** 보낸다. 펌웨어를 다시 올릴 필요가 없다.
 
-  inference/openset_model.json ──(글자 형식 + CRC)──▶ diffuser/ward-01/model  (retained)
+  model/openset_model.json ──(글자 형식 + CRC)──▶ diffuser/ward-01/model  (retained)
                                                          │ 와드: 검사 → 적용 → 내부 저장소(NVS) 저장
   ◀── diffuser/ward-01/model/ack  {"result":"ok", "model":"<id>", ...} ──┘
 
@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from paths import MODEL                                   # noqa: E402
 from export_model import model_text, model_id             # noqa: E402
 
-DEVICE_ID = "ward-01"          # inference/firmware/ward_mqtt/config.h 와 같아야 함
+DEVICE_ID = "ward-01"          # firmware/ward/config.h 와 같아야 함
 
 
 def _env(name):

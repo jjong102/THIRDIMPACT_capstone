@@ -1,41 +1,39 @@
 /**
- * ward_mqtt.ino
+ * ward.ino — 와드 펌웨어 (하나로 수집과 판정을 다 한다)
  *
- * 와드 펌웨어 — 보드를 배터리로 돌리고, 측정값을 MQTT 로 Jetson 에 보낸다. Jetson 이 판정한다.
+ *   측정(8센서) ─┬─ USB 시리얼: CSV 전체 행 ──────────────▶ capture_serial.py (USB 수집)
+ *                ├─ MQTT diffuser/ward-01/sensor (원시값) ──▶ mqtt_capture.py   (배터리 수집)
+ *                └─ ward_infer.h 판정 ── diffuser/ward-01/inference_ward ──▶ ward_view.py · 대시보드
+ *   받는 것: diffuser/ward-01/model (새 모델, NVS 저장) · diffuser/ward-01/cmd (REBASE / REBOOT)
  *
- *   [이 보드] 측정 → MQTT "diffuser/ward-01/sensor" ──→ [Jetson] mqtt_capture.py → CSV
- *                                                  → ward_controller.py (판정·청정기)
- *                                                  → live_view.py       (그래프)
+ * 설정은 config.h — WARD_WIFI 1(기본, 배터리·MQTT) / 0(USB 전용: WiFi 끔, Brownout 없이 수집).
+ *   11/09 까지는 USB 수집용 ward_usb 가 따로 있었다. 출력이 같아 이 펌웨어 하나로 합쳤다.
  *
- * 히터 설정 (8센서 모두 동일 — ward_usb 와 ward_mqtt 는 반드시 같게)
+ * 히터 설정 (8센서 모두 동일) — ★ 이 값을 바꾸면 그때까지 모은 데이터를 쓸 수 없다 (에러 없이 판정만 망가진다).
  *   온도(℃)  {400, 400, 200, 220, 250, 280, 310, 340, 370, 400}
  *   시간배수 {  5,   5,  25,   5,   5,   5,   5,   5,   5,   5}  x 140ms  → 한 사이클 9.8초
  *   - 단계 0~1 400℃ : 이전 사이클 잔류물 태우기
  *   - 단계 2   200℃ : 유일한 하강. 히터는 식는 게 느려서 길게(3.5초) 잡는다
  *   - 단계 3~9      : 220 → 400℃ 상승. 온도마다 반응하는 물질이 달라 서로 다른 정보 7개
  *   100℃ 같은 낮은 온도는 저항이 측정 상한(102.4MΩ)에 붙어 정보가 없어 쓰지 않는다.
- *   ★ 이 값을 바꾸면 그때까지 모은 데이터를 쓸 수 없다 (에러 없이 판정만 망가진다).
+ *   tools/parse_devkit_csv.py 의 STEP_TEMPS 와 같아야 한다 — tools/firmware_parity.py 가 자동으로 비교한다.
  *
  * 출력
- *   - USB 시리얼: ward_usb 와 같은 CSV (더미 포함 전체 행). USB 로 꽂으면 수집용으로도 쓸 수 있다.
+ *   - USB 시리얼: CSV (더미 포함 전체 행) + '#' 로 시작하는 상태 줄(# I = 판정). 수집 CSV 에는 '#' 줄이 안 섞인다.
  *   - MQTT:       Gas Valid 인 행만 (더미 87% 는 보내지 않음) 약 1초마다 묶어서 보낸다.
  *                 메시지 = CSV 행들 (줄바꿈 구분). 헤더 줄은 없다. 끊겨서 버린 줄이 있으면 "# dropped=N" 줄이 붙는다.
  *                 끊긴 동안은 최근 약 30초 분을 보관했다가 다시 붙으면 보낸다 (그 이전은 버림).
- *
- * 토픽·device_id 는 config.h.
  *   "sensor/air_quality/..." 를 피한 이유: 대시보드의 mqtt_bridge.py 가 sensor/air_quality/# 를 구독하고
  *   "라벨 (NN%)" 형식을 기대한다. 원시 데이터를 거기 보내면 대시보드가 엉뚱한 값을 받는다.
  *
- * LED: 1초 점멸 = MQTT 연결됨 / 빠른 점멸(0.25초) = 아직 연결 안 됨
- *   (ward_usb 도 1초 점멸이라 LED 만으로는 구분 안 됨 → 시리얼 부팅 문구 "# MQTT topic=" 로 확인)
+ * LED: 1초 점멸 = MQTT 연결됨 / 빠른 점멸(0.25초) = 아직 연결 안 됨 (WARD_WIFI 0 이면 계속 빠른 점멸)
  *
  * 준비
  *   1. secrets.h.example 을 secrets.h 로 복사해 채움 (WiFi·HiveMQ 자격증명, git 에 안 올라감). 핫스팟은 2.4GHz.
- *   2. 업로드 → USB 를 빼고 배터리 연결 (완충 상태로 — 방전되면 몇 분마다 리셋된다)
- *   3. cd tools → python mqtt_capture.py   (환경변수 MQTT_BROKER / MQTT_USER / MQTT_PASS)
+ *   2. 업로드 (배터리 꽂은 채로 돼도, Brownout 재부팅이 반복되면 팬 선을 잠깐 뺀다)
+ *   3. cd tools → python ward_view.py (판정 보기) / python mqtt_capture.py (녹화)
  *
- * 배터리 주의: 400℃ 단계가 3개라 전류가 크고 WiFi 송신까지 겹친다. 처음 한 번은
- *   tools/heater_check.py 로 400℃ 실패율(≤5%)을 확인할 것. 400℃ 가 실패하면 전원 부족이다.
+ * Brownout: USB + 팬 + WiFi 시작 전류가 겹치면 재부팅이 반복될 수 있다 → WiFi 송신 8.5dBm(config.h).
  */
 
 #include "Arduino.h"
@@ -48,12 +46,12 @@
 #include "config.h"
 #if WARD_INFER
 #include <Preferences.h>      /* 무선으로 받은 모델을 내부 저장소(NVS)에 보관 */
-#include "ward_infer.h"       /* 판정 로직 (PC 에서 tools/firmware_parity.py 로 파이썬과 비교 검증) */
+#include "ward_infer.h"       /* 판정 로직 — PC 도구도 tools/ward_engine.py 로 이 파일을 그대로 쓴다 */
 #endif
 
 #define N_KIT_SENS 8
 #define LED_PIN    LED_BUILTIN
-#define MEAS_DUR   140          /* 스텝당 측정 주기(ms) — ward_usb 와 같게 */
+#define MEAS_DUR   140          /* 스텝당 측정 주기(ms) — 바꾸면 데이터 새로 */
 #define BAUD       115200
 
 #define LINE_MAX    96          /* CSV 한 줄 최대 길이 (실제 약 70자) */
@@ -377,7 +375,7 @@ void setup(void)
       sensorOk[i] = false;
       continue;
     }
-    /* 히터 설정 (모든 센서 동일) — ward_usb 와 반드시 같게 */
+    /* 히터 설정 (모든 센서 동일) — 맨 위 설명 참고, 바꾸면 데이터 새로 */
     bme[i].setTPH();
     uint16_t tempProf[10] = {400, 400, 200, 220, 250, 280, 310, 340, 370, 400};
     uint16_t mulProf[10]  = {  5,   5,  25,   5,   5,   5,   5,   5,   5,   5};
@@ -452,7 +450,7 @@ void loop(void)
       nLeft = bme[i].getData(d);
       if (!(d.status & BME68X_NEW_DATA_MSK)) continue;
 
-      /* ward_usb 와 같은 형식 (Serial.print(float) 가 소수 둘째 자리라 %.2f) */
+      /* 수집 CSV 형식 (예전 ward_usb 의 Serial.print(float) 와 같게 소수 둘째 자리) */
       snprintf(line, sizeof(line), "%lu,%u,%.2f,%.2f,%.2f,%.2f,%u,%u,%u,%X,%u,%u",
                (unsigned long)millis(), (unsigned)i,
                d.temperature, d.pressure, d.humidity, d.gas_resistance,

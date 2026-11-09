@@ -1,12 +1,12 @@
 // 자동 생성 파일 — 직접 고치지 말 것. tools/export_model.py 로 다시 만든다.
-// 원본: 2026-11-05T17:13:47  id:26ad061955
+// 원본: 2026-11-05T17:13:47  id:75b9571e24
 // 펌웨어에 고정되는 기본 모델. 와드가 MQTT 로 새 모델을 받으면(tools/push_model.py) 그쪽을 쓴다.
 #pragma once
 
-#define WI_DEFAULT_MODEL_ID "26ad061955"
+#define WI_DEFAULT_MODEL_ID "75b9571e24"
 
 static const wi_model_t WI_DEFAULT_MODEL = {
-  "26ad061955",
+  "75b9571e24",
   0.2277912f,   /* tau_air: 이보다 작으면 Air */
   0.3f,   /* tau_decide: 이보다 작으면 보류(Weak) */
   4,

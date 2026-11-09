@@ -239,8 +239,8 @@ class Labeler:
         for lab, n in sorted(by.items()):
             print(f"  {lab}: {n}개")
         if self.saved:
-            print(f"\n다음 단계 예:")
-            print(f"  python parse_devkit_csv.py {self.outdir}/Woody woody.csv --label Woody")
+            print("\n다음 단계 예:")
+            print("  python update_model.py      # 학습 → 검사 → 통과하면 교체")
 
 
 def main():

@@ -38,13 +38,13 @@ open_set.py
   여러 날 데이터가 쌓이면 실제 σ 가 커지므로 하한의 영향이 줄어든다.
 
 명령
-  python open_set.py fit                            # training/data → inference/openset_model.json
+  python open_set.py fit                            # training/data → model/openset_model.json
   python open_set.py eval                           # 녹화 하나씩 빼고 검증 (진짜 성능)
   녹화 재생은 python ward_controller.py --replay <녹화.csv> (실제 출동 규칙 그대로), 성능 채점은 replay_eval.py
   실시간: python live_view.py --model ..\\inference\\openset_model.json   (b 로 기준선을 잡으면 판정 시작)
 
 data 폴더 구조는 label_tool.py 가 만드는 그대로: <루트>/<라벨>/*.csv. Air 라벨 폴더가 꼭 있어야 한다.
-★ 히터 설정이 다른 데이터를 섞지 말 것 (학습 펌웨어 ward_usb 와 와드 펌웨어 ward_mqtt 의 설정이 같아야 한다).
+★ 히터 설정이 다른 데이터를 섞지 말 것 (firmware/ward 의 히터 설정 — firmware_parity.py 가 펌웨어와 같은지 확인).
 """
 
 import argparse
@@ -361,7 +361,7 @@ def main():
         p.add_argument("--on", nargs="*", default=["Coffee", "Vinegar"],
                        help="청정기를 켜야 하는 향 라벨 (Unknown 은 항상 켬). 기본 Coffee Vinegar")
         if name == "fit":
-            p.add_argument("--out", type=Path, default=MODEL, help="기본 inference/openset_model.json")
+            p.add_argument("--out", type=Path, default=MODEL, help="기본 model/openset_model.json")
     args = ap.parse_args()
 
     print(f"=== 읽는 중: {args.data_dir} ===")

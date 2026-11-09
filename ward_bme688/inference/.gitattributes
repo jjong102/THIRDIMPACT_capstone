@@ -1,0 +1,5 @@
+# 저장소에는 LF 로 저장 (Windows 작업 폴더는 그대로). 팀 저장소와 줄바꿈 차이로 diff 가 커지지 않게
+* text=auto
+*.png binary
+*.pdf binary
+*.dll binary

@@ -2,7 +2,7 @@
 """
 parse_devkit_csv.py  (v3)
 bme688_dev_kit_logger.ino 가 SD에 남기는 LOG_xxxx.csv, 또는
-ward_usb·ward_mqtt + capture_serial.py / label_tool.py 가 만든 rec_*.csv 를
+와드 펌웨어(firmware/ward) + capture_serial.py / label_tool.py 가 만든 rec_*.csv 를
 "히터 사이클 1회 = 특징벡터 1개" 형태의 학습용 CSV로 변환한다.
 
 출력 컬럼: log_gas_0..9, temp, hum, t_ms, sensor_index, label, source_file
@@ -46,7 +46,7 @@ import pandas as pd
 
 N_STEPS = 10
 
-# 학습 펌웨어(ward_usb)·와드 펌웨어(ward_mqtt)의 히터 온도표 (℃, 단계 0~9). 표시·진단용 — 특징 계산에는 영향 없음.
+# 와드 펌웨어(firmware/ward)의 히터 온도표 — firmware_parity.py 가 펌웨어와 같은지 확인 (℃, 단계 0~9). 표시·진단용 — 특징 계산에는 영향 없음.
 # ★ 펌웨어의 히터 설정을 바꾸면 그때까지 모은 데이터는 쓸 수 없다(섞여도 에러가 나지 않는다).
 STEP_TEMPS = [400, 400, 200, 220, 250, 280, 310, 340, 370, 400]
 CYCLE_S = 9.8          # 한 사이클(10단계) 길이, 초 (실측 9.7)

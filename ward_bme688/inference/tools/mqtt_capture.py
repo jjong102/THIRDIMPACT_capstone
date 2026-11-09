@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 mqtt_capture.py
-배터리로 돌아가는 와드(inference/firmware/ward_mqtt)가 MQTT 로 보낸 측정값을 받아
+배터리로 돌아가는 와드(firmware/ward)가 MQTT 로 보낸 측정값을 받아
 capture_serial.py 와 똑같은 CSV 로 저장한다. (USB 대신 WiFi 로 녹화)
 
   [보드] ── MQTT "diffuser/ward-01/sensor" ──→ [이 스크립트] → training/recordings/rec_....csv
@@ -75,8 +75,8 @@ class Recorder:
             t = int(parts[0])
             if self.last_t is not None and t < self.last_t - 1000:
                 self.resets += 1
-                print(f"\n[경고] 보드가 리셋됐습니다 (TimeStamp 가 0부터 다시 시작). "
-                      f"배터리 전압이 떨어졌을 수 있습니다. 라벨링 때 시간축이 튀면 여기서 나눠 쓰세요.")
+                print("\n[경고] 보드가 리셋됐습니다 (TimeStamp 가 0부터 다시 시작). "
+                      "배터리 전압이 떨어졌을 수 있습니다. 라벨링 때 시간축이 튀면 여기서 나눠 쓰세요.")
             self.last_t = t
             self.f.write(line + "\n")
             self.rows += 1
@@ -204,7 +204,7 @@ def main():
         if rec.resets:
             print(f"  (보드 리셋 {rec.resets}회)")
         if rec.rows == 0:
-            print("주의: 데이터가 없습니다. 보드 펌웨어(ward_mqtt)·토픽·자격증명을 확인하세요.")
+            print("주의: 데이터가 없습니다. 보드 펌웨어(firmware/ward)·토픽·자격증명을 확인하세요.")
 
     finish_recording(out_path, rec.rows, live, args)
 

@@ -29,7 +29,7 @@ ward_controller.py
     향이 있을 때는 따라가지 않는다 — 따라가면 기준선이 향 쪽으로 끌려가 향을 못 보게 된다.
 
 사용
-  python ward_controller.py                    # 최근 녹화를 따라가며 dry-run (모델 기본 inference/openset_model.json)
+  python ward_controller.py                    # 최근 녹화를 따라가며 dry-run (모델 기본 model/openset_model.json)
   python ward_controller.py --send             # 실제 청정기 제어 (Jetson)
   python ward_controller.py --replay ..\\training\\recordings\\rec_....csv
                                                                        # 녹화 파일로 리허설
@@ -52,7 +52,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from live_view import Tail, newest_csv                              # noqa: E402
 from paths import MODEL                                            # noqa: E402
 from open_set import UNKNOWN                                       # noqa: E402
-from ward_engine import WardEngine                                 # noqa: E402
+from ward_engine import WardEngine, add_param_args, engine_kwargs  # noqa: E402
 
 
 class Controller:
@@ -62,11 +62,10 @@ class Controller:
     def __init__(self, model, args, send):
         self.model, self.args, self.send = model, args, send
         self.on_labels = args.on if args.on is not None else model.get("on_labels", ["Coffee"])
-        self.eng = WardEngine(model, self.on_labels, on_cycles=args.on_cycles, off_cycles=args.off_cycles,
-                              min_on=args.min_on,
-                              warmup=1e9 if args.base_at is not None else args.warmup,   # 시점 지정이면 자동 기준선 끔
-                              flat=args.flat, track=args.track, rebase=args.rebase, rebase_weak=args.rebase_weak,
-                              spray_lock=args.spray_lock, stuck_rebase=args.stuck_rebase)
+        kw = engine_kwargs(args)
+        if args.base_at is not None:
+            kw["warmup"] = 1e9                    # 시점 지정이면 자동 기준선 끔
+        self.eng = WardEngine(model, self.on_labels, **kw)
         self.purifier = False
         self.rebases = []                 # 기준선을 다시 잡은 시각들
         self.log = []                     # (sec, 판정, k, n, |Δ|중앙, 청정기)
@@ -157,31 +156,16 @@ def summarize(c):
 
 def main():
     ap = argparse.ArgumentParser(description="향 판정 → 공기청정기 제어")
-    ap.add_argument("--model", type=Path, default=MODEL, help="기본 inference/openset_model.json")
+    ap.add_argument("--model", type=Path, default=MODEL, help="기본 model/openset_model.json")
     ap.add_argument("csv", nargs="?", type=Path, help="따라갈 녹화 CSV (생략하면 가장 최근)")
     ap.add_argument("--replay", type=Path, help="녹화 파일을 처음부터 끝까지 빠르게 재생 (리허설)")
     ap.add_argument("--port", help="시리얼(예: COM5)을 직접 읽어 판정만 함 — 녹화·그래프 없이 추론만 볼 때")
     ap.add_argument("--send", action="store_true", help="실제로 브리지에 명령 전송 (기본 dry-run)")
     ap.add_argument("--bridge", default="http://127.0.0.1:5174/api/fragrance/command")
     ap.add_argument("--on", nargs="*", default=None, help="청정기를 켤 향 라벨 (기본: 모델 설정)")
-    ap.add_argument("--on-cycles", type=int, default=3)
-    ap.add_argument("--off-cycles", type=int, default=12)
-    ap.add_argument("--min-on", type=float, default=180.0)
-    ap.add_argument("--warmup", type=float, default=60.0, help="이 시간(초) 전에는 기준선을 잡지 않음")
-    ap.add_argument("--flat", type=float, default=0.05,
-                    help="자동 기준선 조건: 8센서 평균선의 최근 1분 변동폭이 이 값 미만 "
-                         "(습도 출렁임이 0.02~0.05 라 기본 0.05)")
+    add_param_args(ap)                   # --on-cycles … --spray-lock (기본값 = 와드 펌웨어 ward_infer.h)
     ap.add_argument("--base-at", type=float, default=None,
                     help="자동 대신 이 시각(초, 녹화 시작 기준)에 기준선을 잡음. 리허설용")
-    ap.add_argument("--track", type=float, default=0.02, help="기준선 추종 비율 (0 이면 끔)")
-    ap.add_argument("--rebase", type=float, default=180.0,
-                    help="청정기 꺼진 채 Air/보류가 이 시간(초) 평평하게 이어지면 기준선을 다시 잡음 (0 이면 끔)")
-    ap.add_argument("--stuck-rebase", type=float, default=60.0,
-                    help="청정기 켜진 채 켬 쪽 판정이 이 시간(초) 평평하게 이어지면 기준선을 다시 잡음 (0 이면 끔)")
-    ap.add_argument("--rebase-weak", action="store_true",
-                    help="보류(Weak) 상태에서도 기준선을 다시 잡음 (기본은 Air 일 때만)")
-    ap.add_argument("--spray-lock", type=float, default=180.0,
-                    help="스스로 향을 뿌린 뒤 이 시간(초) 동안 Unknown 으로는 켜지 않음 (0 이면 끔)")
     ap.add_argument("--on-cmd", default="ON000",
                     help="출동 명령. 출동하면서 향도 뿌리려면 예: ON090 (라벤더). 향을 뿌리면 --spray-lock 적용")
     ap.add_argument("-v", "--verbose", action="store_true", help="사이클마다 판정 출력")

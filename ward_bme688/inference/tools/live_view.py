@@ -45,7 +45,7 @@ except (AttributeError, OSError):
 warnings.simplefilter("ignore", RuntimeWarning)      # 빈 구간 nanmean 경고
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from parse_devkit_csv import STEP_TEMPS, CYCLE_S     # 히터 온도표·사이클 길이의 단일 출처
+from parse_devkit_csv import STEP_TEMPS              # 히터 온도표의 단일 출처
 
 for _f in ("Malgun Gothic", "AppleGothic", "NanumGothic"):
     if any(_f == f.name for f in matplotlib.font_manager.fontManager.ttflist):
@@ -261,15 +261,16 @@ class View:
         self.st = Stream()
         self.last_rx = time.time()
         self.toast_until = 0.0
-        self.model = None
-        self.pred = {}                        # 센서 -> (sec, 판정)
+        self.eng = None                       # 판정 엔진 (= 와드 펌웨어 ward_infer.h). --model 일 때만
+        self.dec = None                       # 마지막 판정
         if getattr(args, "model", None):
             import json
-            from open_set import predict_one, vote
-            self._predict_one, self._vote = predict_one, vote
-            self.model = json.loads(Path(args.model).read_text(encoding="utf-8"))
-            print(f"[판정 모델] {args.model}  향: {', '.join(self.model['classes']) or '없음'}"
-                  f"  (Air 문턱 {self.model['tau_air']:.2f})")
+            from ward_engine import WardEngine
+            model = json.loads(Path(args.model).read_text(encoding="utf-8"))
+            self.air_label = model["air_label"]
+            self.eng = WardEngine(model, model.get("on_labels", ["Coffee", "Vinegar"]))
+            print(f"[판정] 와드와 같은 엔진, 모델 {self.eng.model_id}  향: {', '.join(model['classes']) or '없음'}"
+                  f"  — 기준선은 와드처럼 1분 평평하면 자동 ([b] 로 지금 잡기)")
         self._build()
 
     # ---------- 그림 틀 ----------
@@ -337,14 +338,14 @@ class View:
         if ev.key == "b":
             win = self.args.baseline_sec
             if self.st.set_baseline(win):
-                self.pred.clear()
+                if self.eng is not None:
+                    self.eng.set_baseline(win)
                 self._say(f"기준선 설정: 최근 {win:.0f}초 평균 (이 시점이 Air 여야 합니다)")
             else:
                 self._say("기준선을 잡을 데이터가 아직 없습니다")
         elif ev.key == "c":
             self.st.clear_baseline()
-            self.pred.clear()
-            self._say("기준선 해제")
+            self._say("기준선 해제 (그래프만 — 판정 엔진은 그대로)")
         self.redraw()
 
     # ---------- 갱신 ----------
@@ -354,42 +355,23 @@ class View:
             self.last_rx = time.time()
             for ln in lines:
                 self.st.feed(ln)
-        self._classify()
+                if self.eng is not None:
+                    self.dec = self.eng.feed(ln) or self.dec
         self.redraw()
 
-    def _classify(self):
-        """끝난 사이클마다 센서별로 판정 (open_set.py 와 같은 규칙). 기준선이 있어야 한다."""
-        st = self.st
-        while st.done:
-            sec, s, vec = st.done.popleft()
-            if self.model is None or st.base is None or sec < st.base_sec - 5:
-                continue
-            base = [st.base.get((s, k)) for k in range(N_STEPS)]
-            if any(b is None for b in base):
-                continue
-            label, _ = self._predict_one(self.model, np.array(vec) - np.array(base))
-            self.pred[s] = (sec, label)
-
     def _draw_pred(self):
-        if self.model is None:
+        if self.eng is None:
             self.ptext.set_text("")
             return
-        if self.st.base is None:
-            self.ptext.set_text("판정: [b] 로 기준선")
+        if not self.eng.has_base or self.dec is None:
+            self.ptext.set_text("판정: 기준선 기다림 ([b] 로 지금)")
             self.ptext.set_color(C_MUTED)
             self.ptext.set_fontsize(13)
             return
-        per = CYCLE_S
-        fresh = [lab for sec, lab in self.pred.values() if sec >= self.st.sec_now - 1.6 * per]
-        top, k, n = self._vote(fresh)
+        D = self.dec
         self.ptext.set_fontsize(20)
-        if top is None:
-            self.ptext.set_text("판정: 대기 중")
-            self.ptext.set_color(C_MUTED)
-            return
-        air = self.model["air_label"]
-        col = C_UP if top == air else ("#8A6A14" if top == "Unknown" else C_DOWN)
-        self.ptext.set_text(f"판정: {top}  {k}/{n}")
+        col = C_UP if D.top == self.air_label else ("#8A6A14" if D.top == "Unknown" else C_DOWN)
+        self.ptext.set_text(f"판정: {D.top}  {D.k}/{D.n}" + ("  · 청정기 ON" if D.purifier else ""))
         self.ptext.set_color(col)
 
     def redraw(self):
@@ -515,7 +497,7 @@ def main():
     ap.add_argument("--ref", type=float, default=None,
                     help="|Δ| 비교 기준값(직접 지정, 농도 맞출 때). 생략하면 표시 안 함")
     ap.add_argument("--model", type=Path, default=None,
-                    help="open_set.py fit 으로 만든 모델(json). 주면 Air/향/Unknown 판정을 표시")
+                    help="판정 모델(json, 예 ../model/openset_model.json). 주면 와드와 같은 판정을 표시")
     args = ap.parse_args()
 
     path = args.csv or newest_csv()
