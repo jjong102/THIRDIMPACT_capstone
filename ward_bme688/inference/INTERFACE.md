@@ -111,6 +111,9 @@ QoS 0, retained 아님. **60초 동안 `inference_ward` 가 없으면 "와드 �
    → 발향·청정 끝 → /go_around      정찰 재개 (도착 후 HOLD 는 /go_around 로만 풀린다)
 와드 event:"OFF" ─▶ 화면: "공기 회복" 표시 (청정기 끄는 시점은 화면 흐름이 정함)
 ```
+- **도착 뒤 순서는 UI Jetson 서버가 한다 (구현, 11/09)** — `air-scent-dashboard/server/arrival_sequence.py`(ros_nav_bridge 가 부름, 브라우저 없이 동작):
+  `/arrival_at_goal` → ① `ON000` 청정 `ARRIVAL_PURIFY_SEC`(60)초 → ② `OFF<채널 9>` 발향 `ARRIVAL_SPRAY_SEC`(60)초(화면에서 마지막으로 고른 블렌드, 없으면 lavender)
+  + 와드 `SPRAY <초> <이름>` → ③ `OFF000` 전부 끔 → `/go_around`. 중간 취소·정찰 재개 때도 전부 끔. 시험 `POST :5179/api/nav/arrival_sequence/test`, 로그 `/tmp/arrival_sequence.log`.
 - 이미 출동 중이면 새 `ON` 은 무시한다 (와드 하나 기준). 주행 쪽도 복귀 중 `/go_around` 는 무시하고, 도착 후 HOLD 에서는 `/go_to_goal` 을 무시한다.
 - `/arrival_at_goal` 은 reliable·volatile 이벤트 — `ros_nav_bridge` 가 **출동 전에 구독**하고 있어야 한다(늦게 구독하면 지난 도착을 다시 안 준다).
 - 와드 `ON` 도 바뀔 때만 온다 → 화면이 늦게 켜졌으면 `/api/ward/state` 의 최근 `purifier:"on"` 으로 보완할 수 있다.
@@ -150,7 +153,7 @@ GDM 패키지의 `MQTT_sub_node` 를 새 와드 형식에 맞게 고치거나 �
 ## 4. 아직 정할 것
 - [ ] 출동 뒤 청정기를 끄고 `/go_around` 하는 시점: 와드 `OFF` / 발향 끝 / 고정 시간 중 무엇
 - [ ] 정찰 중 청정기는 켜 둘지(정찰 = 청정) 꺼 둘지 — 청정기가 돌면 와드 신호가 1/10 로 약해진다(실측)
-- [ ] `SPRAY <초>` 를 누가 보내나: `fragrance_bridge` (발향 명령과 같은 자리) 권장
+- [x] `SPRAY <초> <이름>` 은 도착 순서(arrival_sequence)가 보낸다
 - [ ] 와드가 여러 개일 때 동시 출동 순서
 - [ ] 예전 `sensor/air_quality` → `/scent/raw` 경로(옛 와드 형식)는 새 와드로 바뀐 뒤 정리
 
