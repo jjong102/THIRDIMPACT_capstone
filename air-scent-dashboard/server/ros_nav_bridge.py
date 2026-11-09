@@ -25,6 +25,9 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from arrival_sequence import ArrivalSequence  # noqa: E402  도착 후 자동 청정·발향
+
 PORT = int(os.environ.get("ROS_NAV_BRIDGE_PORT", "5179"))
 INITIAL_TOPIC = os.environ.get("ROS_INITIAL_POSE_TOPIC", "initialpose")
 AMCL_TOPIC = os.environ.get("ROS_AMCL_POSE_TOPIC", "amcl_pose")
@@ -334,8 +337,13 @@ def _on_arrival(_msg) -> None:
         "arrivalId": int(state.get("arrivalId") or 0) + 1,
     }
     _select_home_ward(patch)
+    seq = _get_sequence()
+    if seq.enabled:
+        patch["scentMission"] = False   # 브라우저의 옛 도착 흐름(useScentMission)과 겹치지 않게
     merge_ui(patch)
     print("[ros-nav-bridge] arrival_at_goal", file=sys.stderr)
+    if seq.enabled:
+        print(f"[ros-nav-bridge] 도착 → 자동 청정·발향 {seq.start(reason='arrival')}", file=sys.stderr)
 
 
 def _motion_patch(phase: str | None) -> dict:
@@ -769,6 +777,7 @@ def publish_empty_command(name: str) -> dict:
 def cancel_navigation() -> dict:
     """복귀를 멈추고 정찰을 재개한다. 속도 토픽은 건드리지 않는다."""
     global _cancel_count
+    _get_sequence().stop()
     result = publish_empty_command("go_around")
     with _lock:
         _cancel_count += 1
@@ -787,6 +796,7 @@ def cancel_navigation() -> dict:
 
 def publish_diffusion_complete() -> dict:
     """분사가 끝나면 차단 대기를 풀고 정찰을 재개한다."""
+    _get_sequence().stop()
     result = publish_empty_command("go_around")
     if result.get("ok"):
         merge_ui(
@@ -1070,6 +1080,9 @@ def merge_ui(patch: dict | None) -> dict:
                     }
                 except (TypeError, ValueError):
                     _ui_state["goalPose"] = None
+        if "arrivalSequence" in patch:
+            seq = patch.get("arrivalSequence")
+            _ui_state["arrivalSequence"] = seq if isinstance(seq, dict) else None
         if "mode" in patch:
             _ui_state["mode"] = "move" if patch.get("mode") == "move" else "select"
         if "poseEstimating" in patch:
@@ -1209,6 +1222,22 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200 if result.get("ok") else 503, result)
             return
 
+        if path in ("/api/nav/arrival_sequence/test", "/api/nav/arrival_sequence/stop"):
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length) if length else b"{}"
+            try:
+                body = json.loads(raw.decode("utf-8") if raw else "{}") or {}
+            except (json.JSONDecodeError, TypeError, ValueError):
+                body = {}
+            seq = _get_sequence()
+            if path.endswith("/test"):
+                result = seq.start(body.get("purify_sec"), body.get("spray_sec"), reason="test",
+                                   go_around=bool(body.get("go_around", False)))
+            else:
+                result = seq.stop()
+            self._send_json(200 if result.get("ok") else 409, result)
+            return
+
         if path == "/api/nav/command":
             length = int(self.headers.get("Content-Length", "0"))
             raw = self.rfile.read(length) if length else b"{}"
@@ -1271,6 +1300,24 @@ class Server(ThreadingHTTPServer):
     daemon_threads = True
     block_on_close = False
     allow_reuse_address = True
+
+
+_sequence: ArrivalSequence | None = None
+
+
+def _go_around_after_sequence() -> dict:
+    """도착 후 청정·발향이 끝나면 정찰 재개 (publish_diffusion_complete 와 같지만 순서를 멈추지 않음)."""
+    result = publish_empty_command("go_around")
+    if result.get("ok"):
+        merge_ui({"isNavigating": False, "navStatus": None, "scentMission": False, "missionPhase": "patrol"})
+    return result
+
+
+def _get_sequence() -> ArrivalSequence:
+    global _sequence
+    if _sequence is None:
+        _sequence = ArrivalSequence(merge_ui, _go_around_after_sequence)
+    return _sequence
 
 
 def main() -> None:

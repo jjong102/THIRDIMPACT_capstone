@@ -123,6 +123,8 @@ function Header({
   let robotLabel = "대기";
   if (moveUi?.poseEstimating) robotLabel = "위치 추정";
   else if (moveUi?.manualControl) robotLabel = "수동";
+  else if (moveUi?.arrivalSequence?.phase === "purify") robotLabel = "청정 중";
+  else if (moveUi?.arrivalSequence?.phase === "spray") robotLabel = "발향 중";
   else if (moveUi?.missionPhase === "return" || moveUi?.isNavigating) robotLabel = "목표 복귀";
   else if (moveUi?.missionPhase === "patrol") robotLabel = "정찰 중";
   else if (moveUi?.missionPhase === "wait") robotLabel = "목표 대기";
