@@ -27,6 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from arrival_sequence import ArrivalSequence  # noqa: E402  도착 후 자동 청정·발향
+from ward_dispatch import WardDispatch  # noqa: E402  와드 악취 → /go_to_goal
 
 PORT = int(os.environ.get("ROS_NAV_BRIDGE_PORT", "5179"))
 INITIAL_TOPIC = os.environ.get("ROS_INITIAL_POSE_TOPIC", "initialpose")
@@ -1080,6 +1081,9 @@ def merge_ui(patch: dict | None) -> dict:
                     }
                 except (TypeError, ValueError):
                     _ui_state["goalPose"] = None
+        if "wardState" in patch:
+            ward = patch.get("wardState")
+            _ui_state["wardState"] = ward if isinstance(ward, dict) else None
         if "arrivalSequence" in patch:
             seq = patch.get("arrivalSequence")
             _ui_state["arrivalSequence"] = seq if isinstance(seq, dict) else None
@@ -1330,6 +1334,7 @@ def main() -> None:
     )
     _import_ros()
     threading.Thread(target=ensure_ros, daemon=True).start()
+    WardDispatch(publish_goal, snapshot_ui, merge_ui, lambda: _get_sequence().running()).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
