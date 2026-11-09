@@ -111,6 +111,8 @@ QoS 0, retained 아님. **60초 동안 `inference_ward` 가 없으면 "와드 �
    → 발향·청정 끝 → /go_around      정찰 재개 (도착 후 HOLD 는 /go_around 로만 풀린다)
 와드 event:"OFF" ─▶ 화면: "공기 회복" 표시 (청정기 끄는 시점은 화면 흐름이 정함)
 ```
+- **악취 → 출동도 UI Jetson 서버가 한다 (구현, 11/09)** — `server/ward_dispatch.py`: MQTT `diffuser/+/inference_ward` 의 `event:"ON"`(state MALODOR/UNKNOWN) → `/go_to_goal`.
+  청정·발향 중 / 이미 복귀 중 / 수동 조작 / 마지막 출동 60초 안(`WARD_DISPATCH_COOLDOWN`)이면 안 보낸다. 최근 판정은 `/api/nav/ui` 의 `wardState`. (그래서 `ward_bridge_node` 없이도 출동 흐름이 돈다)
 - **도착 뒤 순서는 UI Jetson 서버가 한다 (구현, 11/09)** — `air-scent-dashboard/server/arrival_sequence.py`(ros_nav_bridge 가 부름, 브라우저 없이 동작):
   `/arrival_at_goal` → ① `ON000` 청정 `ARRIVAL_PURIFY_SEC`(60)초 → ② `OFF<채널 9>` 발향 `ARRIVAL_SPRAY_SEC`(60)초(화면에서 마지막으로 고른 블렌드, 없으면 lavender)
   + 와드 `SPRAY <초> <이름>` → ③ `OFF000` 전부 끔 → `/go_around`. 중간 취소·정찰 재개 때도 전부 끔. 시험 `POST :5179/api/nav/arrival_sequence/test`, 로그 `/tmp/arrival_sequence.log`.
