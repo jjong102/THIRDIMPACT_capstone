@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
+import useActiveRobotMap from "./useActiveRobotMap";
 import useGdmRobotPose from "./useGdmRobotPose";
 import {
   cancelNavGoal,
@@ -28,6 +29,13 @@ export function isNotLocalized(locStatus) {
   return String(locStatus || "").toLowerCase() === "not_localized";
 }
 
+export function missionBlockReason(navUi) {
+  if (navUi?.manualControl) return "조이스틱 수동 조작 중입니다";
+  if (navUi?.missionReady === false) return "주행 준비가 끝나지 않았습니다";
+  if (isNotLocalized(navUi?.locStatus)) return "위치 추정이 필요합니다";
+  return "";
+}
+
 export default function useScentMissionNav({ onSelectWard } = {}) {
   const [mapMeta, setMapMeta] = useState(null);
   const [navUi, setNavUi] = useState({
@@ -37,11 +45,22 @@ export default function useScentMissionNav({ onSelectWard } = {}) {
     fragranceSpraying: false,
     fragranceWardId: null,
     locStatus: null,
+    missionPhase: null,
+    missionReady: null,
+    manualControl: false,
+    lastEvent: null,
   });
   const [navBusy, setNavBusy] = useState(false);
   const { pose: gdmPose } = useGdmRobotPose(true);
+  const robotMap = useActiveRobotMap();
 
   useEffect(() => {
+    if (robotMap.status === "loading") return undefined;
+    if (robotMap.meta) {
+      setMapMeta(robotMap.meta);
+      return undefined;
+    }
+
     let cancelled = false;
     fetchGdmRooms()
       .then((payload) => {
@@ -57,7 +76,7 @@ export default function useScentMissionNav({ onSelectWard } = {}) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [robotMap.status, robotMap.signature, robotMap.meta]);
 
   useEffect(() => {
     let cancelled = false;
@@ -79,6 +98,11 @@ export default function useScentMissionNav({ onSelectWard } = {}) {
             state.locStatus === "localized"
               ? state.locStatus
               : null,
+          missionPhase: state.missionPhase || null,
+          missionReady:
+            typeof state.missionReady === "boolean" ? state.missionReady : null,
+          manualControl: Boolean(state.manualControl),
+          lastEvent: state.lastEvent || null,
         });
       } catch {
         // keep last known nav status
@@ -101,7 +125,7 @@ export default function useScentMissionNav({ onSelectWard } = {}) {
 
       const goingHere = isScentMissionTo(navUi, ward.id);
 
-      if (!goingHere && isNotLocalized(navUi.locStatus)) {
+      if (!goingHere && missionBlockReason(navUi)) {
         return;
       }
 
@@ -182,7 +206,7 @@ export default function useScentMissionNav({ onSelectWard } = {}) {
         !navUi?.dropPin &&
         String(navUi?.selectedId ?? "") === String(ward.id);
 
-      if (!alreadyGoing && isNotLocalized(navUi.locStatus)) {
+      if (!alreadyGoing && missionBlockReason(navUi)) {
         return false;
       }
 

@@ -122,7 +122,14 @@ function Header({
     : "Wi-Fi 끊김";
   let robotLabel = "대기";
   if (moveUi?.poseEstimating) robotLabel = "위치 추정";
-  else if (moveUi?.isNavigating) robotLabel = "이동 중";
+  else if (moveUi?.manualControl) robotLabel = "수동";
+  else if (moveUi?.missionPhase === "return" || moveUi?.isNavigating) robotLabel = "목표 복귀";
+  else if (moveUi?.missionPhase === "patrol") robotLabel = "정찰 중";
+  else if (moveUi?.missionPhase === "wait") robotLabel = "목표 대기";
+  else if (moveUi?.missionPhase === "setup") robotLabel = "설정";
+  else if (moveUi?.locStatus === "not_localized" || moveUi?.missionReady === false) {
+    robotLabel = "준비 안 됨";
+  }
   const locationLabel = pose?.live ? robotLabel : "위치 없음";
   const screensaverLabel = screensaverIdleDisabled
     ? "화면보호기 꺼짐, 길게 눌러 자동 전환 켜기"

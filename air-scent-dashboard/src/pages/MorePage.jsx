@@ -1,4 +1,4 @@
-import { Check, Eye, Heart, Mic, Moon, Network, Play, PlugZap, Power, RefreshCw, RotateCw, Sparkles, SprayCan, Usb, Volume2, Wifi, WifiOff, Wind } from "lucide-react";
+import { Check, Eye, Heart, Map, Mic, Moon, Network, Play, PlugZap, Power, RefreshCw, RotateCw, Sparkles, SprayCan, Usb, Volume2, Wifi, WifiOff, Wind } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import AlpacaCharacter from "../components/screensaver/AlpacaCharacter";
@@ -27,6 +27,7 @@ import {
   wardDisplayName,
 } from "../utils/wardStorage";
 
+import MapSettingsPanel from "../components/MapSettingsPanel";
 import "./MorePage.css";
 import { scentLabel } from "../data/scentRecipes";
 import { loadDeveloperMode, saveDeveloperMode } from "../utils/developerMode";
@@ -218,6 +219,7 @@ const MORE_TAB_KEY = "air-scent:more-tab";
 const MORE_TABS = [
   { id: "device", label: "기기", Icon: Network },
   { id: "control", label: "제어", Icon: Wind },
+  { id: "map", label: "맵", Icon: Map },
   { id: "demo", label: "시연", Icon: Sparkles },
   { id: "screen", label: "화면", Icon: Eye },
   { id: "voice", label: "음성", Icon: Volume2 },
@@ -807,6 +809,8 @@ function MorePage({
             </div>
           </section>
         ) : null}
+
+        {activeTab === "map" ? <MapSettingsPanel /> : null}
 
         {activeTab === "demo" ? (
           <section className="more-air-status-card more-demo-card more-tab-card">

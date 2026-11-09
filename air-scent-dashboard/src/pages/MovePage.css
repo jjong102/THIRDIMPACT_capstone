@@ -339,6 +339,38 @@
   cursor: pointer;
   touch-action: manipulation;
   box-shadow: 0 6px 16px rgba(15, 23, 42, 0.12);
+  transition:
+    background 0.35s ease,
+    border-color 0.35s ease,
+    color 0.35s ease,
+    transform 0.18s ease;
+}
+
+.slam-fullscreen-swap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.slam-fullscreen-swap.is-live {
+  animation: slam-fullscreen-pop 0.42s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes slam-fullscreen-pop {
+  from {
+    opacity: 0.4;
+    transform: scale(0.82);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .slam-fullscreen-swap.is-live {
+    animation: none;
+  }
 }
 
 .slam-fullscreen-btn:active {
@@ -394,6 +426,8 @@
   transition: opacity 0.3s ease;
   pointer-events: none;
   z-index: 1;
+  transform: translate(var(--map-pan-x, 0px), var(--map-pan-y, 0px)) rotate(var(--map-rotation, 0deg)) scale(var(--map-view-scale, 1));
+  transform-origin: center center;
   /* 흰 도면 → 슬레이트 톤으로 맞춤, 흰 배경은 multiply로 녹임 */
   filter:
     grayscale(1)

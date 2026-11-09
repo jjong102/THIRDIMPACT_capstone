@@ -74,6 +74,14 @@ export default function useMoveUiSync({
   setPoseEstimating,
   locStatus,
   setLocStatus,
+  missionPhase,
+  setMissionPhase,
+  manualControl,
+  setManualControl,
+  missionReady,
+  setMissionReady,
+  lastEvent,
+  setLastEvent,
   draggingId,
   poseDragging,
 }) {
@@ -91,6 +99,10 @@ export default function useMoveUiSync({
     mode,
     poseEstimating,
     locStatus,
+    missionPhase,
+    manualControl,
+    missionReady,
+    lastEvent,
   };
 
   const rememberRev = useCallback((state) => {
@@ -166,12 +178,41 @@ export default function useMoveUiSync({
         setLocStatus(nextLoc);
       }
 
+      const nextPhase = raw.missionPhase || null;
+      if (nextPhase !== (snapshotRef.current.missionPhase || null)) {
+        applyingRemoteRef.current = true;
+        setMissionPhase?.(nextPhase);
+      }
+
+      const nextManual = Boolean(raw.manualControl);
+      if (nextManual !== Boolean(snapshotRef.current.manualControl)) {
+        applyingRemoteRef.current = true;
+        setManualControl?.(nextManual);
+      }
+
+      const nextReady =
+        typeof raw.missionReady === "boolean" ? raw.missionReady : null;
+      if (nextReady !== (snapshotRef.current.missionReady ?? null)) {
+        applyingRemoteRef.current = true;
+        setMissionReady?.(nextReady);
+      }
+
+      const nextEvent = raw.lastEvent || null;
+      if (nextEvent !== (snapshotRef.current.lastEvent || null)) {
+        applyingRemoteRef.current = true;
+        setLastEvent?.(nextEvent);
+      }
+
       return true;
     },
     [
       setDropPin,
       setIsNavigating,
+      setLastEvent,
       setLocStatus,
+      setManualControl,
+      setMissionPhase,
+      setMissionReady,
       setMode,
       setNavGoal,
       setPoseEstimating,

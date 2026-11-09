@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { publishDiffusionComplete, sendNavGoal } from "../services/gdmMap";
+import { publishGoAround } from "../services/gdmMap";
 import { fetchMqttAirQuality } from "../services/mqttAirQuality";
 import {
   clearSharedFragranceSpraying,
@@ -17,15 +17,13 @@ import { getWardScent, loadWardScents, loadWards } from "../utils/wardStorage";
 import { readingForWard, resolveScentTone } from "../utils/scentVisual";
 import { isOdorTrip, clearOdorTrip } from "../utils/odorTrip";
 import {
-  beginScentReturn,
   clearScentReturn,
-  getScentReturnPose,
   isScentReturning,
 } from "../utils/scentReturn";
 import {
   announcePurifyDoneAndSpray,
   announcePurifyStart,
-  announceReturnHome,
+  announceResumePatrol,
   announceSprayComplete,
   resetMissionAnnouncements,
 } from "../utils/robotAnnounce";
@@ -200,7 +198,7 @@ export default function useScentMission({
           Boolean(selectedId && !ui?.dropPin) &&
           !odorTrip &&
           !returningHome;
-        const arrivalKey = `${selectedId}|${ui?.navGoal?.x}|${ui?.navGoal?.y}|${navStatus}`;
+        const arrivalKey = `${selectedId}|${Number(ui?.arrivalId) || 0}`;
 
         if (odorTrip && (navStatus === "SUCCEEDED" || navStatus === "CANCELED" || navStatus === "ABORTED")) {
           clearOdorTrip();
@@ -389,7 +387,7 @@ export default function useScentMission({
             receivedAfter(reading, sprayedAtRef.current)
           ) {
             try {
-              await publishDiffusionComplete();
+              await publishGoAround();
             } catch {
               // retry next tick
               return;
@@ -401,40 +399,18 @@ export default function useScentMission({
             sawSharedSprayRef.current = false;
             void clearSharedFragranceSpraying().catch(() => {});
             announceSprayComplete(arrivalKey);
-
-            const home = getScentReturnPose();
-            if (home) {
-              beginScentReturn();
-              returnSeenMovingRef.current = false;
-              returnSentAtRef.current = Date.now();
-              setPhaseSafe("returning");
-              announceReturnHome(arrivalKey);
-              try {
-                await sendNavGoal({
-                  x: home.x,
-                  y: home.y,
-                  yaw: home.yaw,
-                  frame_id: "map",
-                });
-                if (cancelled) return;
-                await putMoveUi({
-                  selectedId: wardIdRef.current || selectedId,
-                  dropPin: null,
-                  navGoal:
-                    home.mapX != null && home.mapY != null
-                      ? { x: home.mapX, y: home.mapY, yaw: home.yaw }
-                      : ui?.navGoal,
-                  isNavigating: true,
-                  mode: "select",
-                });
-              } catch {
-                clearScentReturn();
-                returnSeenMovingRef.current = false;
-                returnSentAtRef.current = 0;
-                setPhaseSafe("done");
-              }
-            } else {
-              setPhaseSafe("done");
+            announceResumePatrol(arrivalKey);
+            clearScentReturn();
+            returnSeenMovingRef.current = false;
+            returnSentAtRef.current = 0;
+            setPhaseSafe("done");
+            try {
+              await putMoveUi({
+                isNavigating: false,
+                scentMission: false,
+              });
+            } catch {
+              // patrol resume already published
             }
           }
         }

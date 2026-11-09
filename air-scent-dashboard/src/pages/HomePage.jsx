@@ -17,9 +17,10 @@ import {
   clampTargetPercent,
   labelForTargetPercent,
 } from "../utils/fragranceIntensity";
+import useActiveRobotMap from "../hooks/useActiveRobotMap";
 import useSharedWards from "../hooks/useSharedWards";
 import useScentMissionNav, {
-  isNotLocalized,
+  missionBlockReason,
   isScentMissionTo,
 } from "../hooks/useScentMissionNav";
 import { stopSharedFragranceSpray } from "../services/moveUi";
@@ -89,6 +90,7 @@ function HomePage({
   onStopFragrance,
 }) {
   const outdoor = outdoorEnvironment ?? { loading: true, hasData: false };
+  const robotMap = useActiveRobotMap();
   const wards = useSharedWards();
   const [wardScents, setWardScents] = useState(loadWardScents);
   const { navUi, navBusy, mapMeta, startScentMission } = useScentMissionNav();
@@ -195,7 +197,8 @@ function HomePage({
     spraying && activeWard && String(sprayWardId) === String(activeWard.id)
   );
 
-  const notLocalized = isNotLocalized(navUi.locStatus);
+  const blockReason = missionBlockReason(navUi);
+  const notLocalized = Boolean(blockReason);
 
   const handleHomeGo = () => {
     if (!activeWard) return;
@@ -317,7 +320,7 @@ function HomePage({
             <p className="section-label">현장 지도</p>
             <span className="slam-live-chip">
               <span className="slam-live-dot" aria-hidden="true" />
-              GDM SLAM
+              {robotMap.map?.name ?? "GDM SLAM"}
             </span>
           </header>
           <div className="home-map-stage">
@@ -343,7 +346,7 @@ function HomePage({
                   onClick={handleHomeGo}
                   title={
                     notLocalized && !goingToActive && !stoppingActive
-                      ? "위치 추정이 필요합니다"
+                      ? blockReason
                       : undefined
                   }
                   aria-label={

@@ -32,7 +32,7 @@ import {
 } from "../utils/fragranceIntensity";
 import useSharedWards from "../hooks/useSharedWards";
 import useScentMissionNav, {
-  isNotLocalized,
+  missionBlockReason,
   isScentMissionTo,
 } from "../hooks/useScentMissionNav";
 import "./FragrancePage.css";
@@ -134,7 +134,8 @@ function ControlPage({
   const goingToSelected = Boolean(
     selectedWard && isScentMissionTo(navUi, selectedWard.id)
   );
-  const notLocalized = isNotLocalized(navUi.locStatus);
+  const blockReason = missionBlockReason(navUi);
+  const notLocalized = Boolean(blockReason);
 
   useEffect(() => {
     if (!selectedWardId) return;
@@ -380,7 +381,7 @@ function ControlPage({
               onClick={() => void startScentMission(selectedWard)}
               title={
                 notLocalized && !goingToSelected
-                  ? "위치 추정이 필요합니다"
+                  ? blockReason
                   : undefined
               }
               disabled={
