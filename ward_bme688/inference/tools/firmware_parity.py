@@ -75,7 +75,7 @@ int main(int argc, char **argv) {
 
 def python_log(model, csv, rebase):
     ns = argparse.Namespace(on=None, on_cycles=3, off_cycles=12, min_on=180.0, warmup=60.0, flat=0.05,
-                            base_at=None, track=0.02, rebase=rebase, rebase_weak=False, spray_lock=180.0, stuck_rebase=300.0,
+                            base_at=None, track=0.02, rebase=rebase, rebase_weak=False, spray_lock=180.0, stuck_rebase=60.0,
                             on_cmd="ON000", verbose=False)
     c = Controller(model, ns, send=False)
     with contextlib.redirect_stdout(io.StringIO()):

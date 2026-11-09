@@ -25,6 +25,10 @@
 //   "WARDMODEL RESET" 을 받으면 저장된 모델을 지우고 펌웨어 기본 모델(model.h)로 돌아간다.
 #define TOPIC_MODEL     TOPIC_PREFIX "/model"
 #define TOPIC_MODEL_ACK TOPIC_PREFIX "/model/ack"
+// 원격 명령 (tools/ward_view.py --rebase / --reboot). retained 로 보내지 말 것.
+//   "REBASE" = 판정 상태만 처음으로 (센서는 계속 데워진 채, 1분 평평하면 기준선 다시)
+//   "REBOOT" = 보드 재시작 (RESET 버튼과 같음). 답장은 TOPIC_MODEL_ACK 로.
+#define TOPIC_CMD       TOPIC_PREFIX "/cmd"
 
 // WiFi 를 쓸지. 0 이면 WiFi·MQTT 를 아예 켜지 않는다 (USB 로 쓰면서 온디바이스 판정만 시리얼로 볼 때).
 //   11/04: 방전된 배터리 + 팬 + WiFi 시작 전류가 겹쳐 Brownout 리셋이 반복 → USB 수집 때는 0 으로 빌드.

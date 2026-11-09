@@ -49,7 +49,7 @@ except (AttributeError, OSError):
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from live_view import Stream, Tail, newest_csv, N_STEPS            # noqa: E402
 from paths import MODEL                                            # noqa: E402
-from open_set import predict_one, vote, action_on, action_of, UNKNOWN, WEAK   # noqa: E402
+from open_set import predict_one, vote, action_of, UNKNOWN, WEAK   # noqa: E402
 
 
 class Controller:
@@ -121,8 +121,8 @@ class Controller:
         if res is None:
             return
         _, g = res
-        m = g[:, 0] >= sec - self.args.stuck_rebase
-        if m.sum() >= 5 and np.ptp(g[m, 1]) < self.args.flat:
+        nr = max(5, int(round(self.args.stuck_rebase / 9.7)))   # 시간 대신 최근 라운드 수로 (와드 C 와 경계 어긋남 방지)
+        if len(g) >= nr and np.ptp(g[-nr:, 1]) < self.args.flat:
             self.st.set_baseline(60)
             self.rebases.append(sec)
             self.stuck_run = 0
@@ -267,7 +267,7 @@ def main():
     ap.add_argument("--track", type=float, default=0.02, help="기준선 추종 비율 (0 이면 끔)")
     ap.add_argument("--rebase", type=float, default=180.0,
                     help="청정기 꺼진 채 Air/보류가 이 시간(초) 평평하게 이어지면 기준선을 다시 잡음 (0 이면 끔)")
-    ap.add_argument("--stuck-rebase", type=float, default=300.0,
+    ap.add_argument("--stuck-rebase", type=float, default=60.0,
                     help="청정기 켜진 채 켬 쪽 판정이 이 시간(초) 평평하게 이어지면 기준선을 다시 잡음 (0 이면 끔)")
     ap.add_argument("--rebase-weak", action="store_true",
                     help="보류(Weak) 상태에서도 기준선을 다시 잡음 (기본은 Air 일 때만)")

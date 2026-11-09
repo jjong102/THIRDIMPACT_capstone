@@ -134,8 +134,15 @@ static void model_ack(const char *result, const char *msg)
 }
 
 /* core 0: PubSubClient 콜백 — 복사만 */
+static volatile int g_cmd = 0;                        /* 1 = REBASE, 2 = REBOOT (TOPIC_CMD) */
+
 static void on_mqtt(char *topic, byte *payload, unsigned int len)
 {
+  if (strcmp(topic, TOPIC_CMD) == 0) {
+    if (len >= 6 && memcmp(payload, "REBASE", 6) == 0) g_cmd = 1;
+    else if (len >= 6 && memcmp(payload, "REBOOT", 6) == 0) g_cmd = 2;
+    return;
+  }
   if (strcmp(topic, TOPIC_MODEL) != 0) return;
   if (len == 0 || g_model_pending) return;           /* 빈 메시지 = retained 지움 / 처리 중이면 다음에 */
   if (len > WI_MODEL_TEXT_MAX) len = WI_MODEL_TEXT_MAX + 1;   /* 너무 길면 검사에서 size 로 거절 */
@@ -156,6 +163,21 @@ static void model_apply(const wi_model_t &M, const char *src)
 /* core 1: 받은 모델 검사 → 적용 → 저장 → 답장 */
 static void model_poll()
 {
+  if (g_cmd == 1) {                                  /* 기준선만 다시: 모델은 그대로 두고 판정 상태 초기화 */
+    g_cmd = 0;
+    wi_model_t M = g_wi.M;
+    wi_init(&g_wi, g_wi.P);
+    g_wi.M = M;
+    g_lastWarmMsg = 0;
+    model_ack("rebase", "기준선 다시 잡는 중 (1분 평평하면)");
+  } else if (g_cmd == 2) {
+    g_cmd = 0;
+    if (millis() > 30000) {                           /* 부팅 직후엔 무시 (혹시 남은 명령으로 재부팅 반복 방지) */
+      model_ack("reboot", "재시작");
+      delay(1500);                                    /* 답장이 나갈 시간 */
+      ESP.restart();
+    }
+  }
   if (!g_model_pending) return;
   size_t len = g_model_rx_len;
   if (len >= 15 && strncmp(g_model_rx, "WARDMODEL RESET", 15) == 0) {
@@ -291,6 +313,7 @@ static void mqtt_task(void *arg)
       Serial.print(MQTT_TOPIC); Serial.println(F(")"));
 #if WARD_INFER
       mqtt.subscribe(TOPIC_MODEL, 1);                /* retained 로 남아 있는 최신 모델이 바로 온다 */
+      mqtt.subscribe(TOPIC_CMD, 0);
 #endif
     } else if (!now && wasConnected) {
       Serial.println(F("# MQTT 끊김 → 재접속 시도"));

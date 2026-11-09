@@ -72,11 +72,11 @@ typedef struct {                  /* ward_controller.py 기본값과 같음 */
   float rebase;                   /* 180 초 (0 = 끔) */
   int   rebase_weak;              /* 0   */
   float spray_lock;               /* 180 초 */
-  float stuck_rebase;             /* 300 초 (0 = 끔) — 켜진 채 켬 쪽이 평평하면 기준선 다시 */
+  float stuck_rebase;             /* 60 초 (0 = 끔) — 켜진 채 켬 쪽이 평평하면 기준선 다시 */
 } wi_params_t;
 
 static inline wi_params_t wi_default_params(void) {
-  wi_params_t p = {3, 12, 180.0f, 60.0f, 0.05f, 0.02f, 180.0f, 0, 180.0f, 300.0f};
+  wi_params_t p = {3, 12, 180.0f, 60.0f, 0.05f, 0.02f, 180.0f, 0, 180.0f, 60.0f};
   return p;
 }
 
@@ -133,6 +133,18 @@ static inline float wi_median(const float *v, int n) {
 }
 
 /* 최근 win 초 라운드 평균선의 변동폭. 라운드가 5개 미만이면 -1 */
+/* 최근 nr 라운드 평균선의 흔들림 (라운드가 모자라면 -1). 갇힘 풀기용 — 시간 경계 대신 개수로 세서 파이썬과 맞춘다 */
+static inline float wi_round_ptp_n(const wi_state_t *S, int nr) {
+  int i; float lo = 1e9f, hi = -1e9f;
+  if (S->r_n < nr) return -1.0f;
+  for (i = 0; i < nr; i++) {
+    int idx = (S->r_i - 1 - i + WI_ROUNDS) % WI_ROUNDS;
+    if (S->r_avg[idx] < lo) lo = S->r_avg[idx];
+    if (S->r_avg[idx] > hi) hi = S->r_avg[idx];
+  }
+  return hi - lo;
+}
+
 static inline float wi_round_ptp(const wi_state_t *S, float since) {
   int i, cnt = 0; float lo = 1e9f, hi = -1e9f;
   for (i = 0; i < S->r_n; i++) {
@@ -260,7 +272,8 @@ static inline void wi_decide(wi_state_t *S, float sec) {
   if (S->P.stuck_rebase > 0 && S->purifier && want == 1) {
     S->stuck_run++;
     if (S->stuck_run * 9.7f >= S->P.stuck_rebase && sec - S->on_since >= S->P.min_on) {
-      float p = wi_round_ptp(S, sec - S->P.stuck_rebase);
+      int nr = (int)(S->P.stuck_rebase / 9.7f + 0.5f); if (nr < 5) nr = 5;
+      float p = wi_round_ptp_n(S, nr);
       if (p >= 0 && p < S->P.flat) { wi_set_baseline(S, 60.0f); S->stuck_run = 0; D.rebased = 2; }
     }
   } else S->stuck_run = 0;

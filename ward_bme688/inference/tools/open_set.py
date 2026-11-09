@@ -40,8 +40,7 @@ open_set.py
 명령
   python open_set.py fit                            # training/data → inference/openset_model.json
   python open_set.py eval                           # 녹화 하나씩 빼고 검증 (진짜 성능)
-  python open_set.py replay ..\\training\\recordings\\rec_....csv --base 0 120
-                                                    # 녹화 파일을 시간순으로 판정
+  녹화 재생은 python ward_controller.py --replay <녹화.csv> (실제 출동 규칙 그대로), 성능 채점은 replay_eval.py
   실시간: python live_view.py --model ..\\inference\\openset_model.json   (b 로 기준선을 잡으면 판정 시작)
 
 data 폴더 구조는 label_tool.py 가 만드는 그대로: <루트>/<라벨>/*.csv. Air 라벨 폴더가 꼭 있어야 한다.
@@ -51,7 +50,7 @@ data 폴더 구조는 label_tool.py 가 만드는 그대로: <루트>/<라벨>/*
 import argparse
 import json
 import sys
-from collections import Counter, defaultdict
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -332,39 +331,6 @@ def evaluate(df, args):
     return res
 
 
-# ------------------------------------------------------------------ 녹화 재생
-def replay(path, model, base_win, step_s=30.0):
-    feat, _ = parse_file(Path(path), "x", True, True, None)
-    if feat.empty:
-        sys.exit("사이클이 없습니다.")
-    t0 = feat["t_ms"].min()
-    feat["sec"] = (feat["t_ms"] - t0) / 1000.0
-    b0, b1 = base_win
-    base = feat[(feat["sec"] >= b0) & (feat["sec"] <= b1)].groupby("sensor_index")[FEATS].mean()
-    if base.empty:
-        sys.exit(f"기준선 구간 {b0}~{b1}초에 사이클이 없습니다.")
-    per = 0
-    print(f"기준선: {b0:.0f}~{b1:.0f}초 평균   ({Path(path).name})")
-    print(f"{'구간':>12s}   판정        센서표   |Δ|")
-    for lo in np.arange(0, feat["sec"].max() + 1, step_s):
-        g = feat[(feat["sec"] >= lo) & (feat["sec"] < lo + step_s)]
-        if g.empty:
-            continue
-        labs, mags = [], []
-        for _, r in g.iterrows():
-            s = r["sensor_index"]
-            if s not in base.index:
-                continue
-            p, info = predict_one(model, r[FEATS].to_numpy(float) - base.loc[s].to_numpy(float))
-            labs.append(p)
-            mags.append(info.get("mag", np.nan))
-        top, k, n = vote(labs, model.get("on_labels", ["Coffee"]))
-        mark = "" if top in (AIR, None) else ("  ◀" if top != UNKNOWN else "  ?")
-        print(f"  {lo/60:4.1f}~{(lo+step_s)/60:4.1f}분   {str(top):10s} {k:3d}/{n:<3d}  "
-              f"{np.nanmedian(mags):5.2f}{mark}")
-        per += 1
-
-
 # ------------------------------------------------------------------ CLI
 def main():
     ap = argparse.ArgumentParser(description="아는 향 / Air / Unknown 판정")
@@ -396,18 +362,7 @@ def main():
                        help="청정기를 켜야 하는 향 라벨 (Unknown 은 항상 켬). 기본 Coffee Vinegar")
         if name == "fit":
             p.add_argument("--out", type=Path, default=MODEL, help="기본 inference/openset_model.json")
-    p = sp.add_parser("replay")
-    p.add_argument("csv", type=Path)
-    p.add_argument("--model", type=Path, default=MODEL)
-    p.add_argument("--base", type=float, nargs=2, default=(0, 120), metavar=("시작초", "끝초"),
-                   help="이 녹화에서 Air 로 쓸 구간 (기본 0~120초)")
-    p.add_argument("--step", type=float, default=30.0, help="출력 간격(초)")
     args = ap.parse_args()
-
-    if args.cmd == "replay":
-        model = json.loads(args.model.read_text(encoding="utf-8"))
-        replay(args.csv, model, args.base, args.step)
-        return
 
     print(f"=== 읽는 중: {args.data_dir} ===")
     df = load_dir(args.data_dir, not args.no_ignore_heat_stab, args.air_label, args.verbose)

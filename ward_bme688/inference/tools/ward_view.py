@@ -13,6 +13,8 @@ ward_view.py
 사용:
   python ward_view.py                # ward-01, Ctrl+C 로 종료
   python ward_view.py --device ward-02
+  python ward_view.py --rebase       # 기준선만 다시 잡기 (센서는 데워진 채) → 답장 받고 끝
+  python ward_view.py --reboot       # 와드 재시작 (RESET 버튼과 같음, 켠 지 30초 안에는 무시)
 """
 
 import argparse
@@ -38,7 +40,12 @@ STATE_KO = {"WARMUP": "예열 중", "CLEAN": "깨끗함", "SCENT": "향기", "MA
 def main():
     ap = argparse.ArgumentParser(description="와드 온디바이스 판정 MQTT 보기")
     ap.add_argument("--device", default="ward-01")
+    g = ap.add_mutually_exclusive_group()
+    g.add_argument("--rebase", action="store_true", help="와드에 기준선 다시 잡기 명령을 보내고 끝")
+    g.add_argument("--reboot", action="store_true", help="와드에 재시작 명령을 보내고 끝")
     args = ap.parse_args()
+    if args.rebase or args.reboot:
+        return send_cmd(args.device, "REBASE" if args.rebase else "REBOOT")
     broker, port, user, pw = credentials()
     base = f"diffuser/{args.device}"
     st = {"sensor": 0, "up": None, "last": time.time()}
@@ -61,7 +68,7 @@ def main():
         except ValueError:
             return
         if t.endswith("/model/ack"):
-            print(f"  [모델 답장] {d.get('result')}  model={d.get('model')}  {d.get('msg', '')}")
+            print(f"  [와드 답장] {d.get('result')}  model={d.get('model')}  {d.get('msg', '')}")
             return
         if not t.endswith("/inference_ward"):
             return
@@ -97,5 +104,44 @@ def main():
         c.loop_stop()
 
 
+def send_cmd(device, cmd, wait=15.0):
+    """diffuser/<id>/cmd 로 명령 1개 (retained 아님) → /model/ack 답장을 기다린다."""
+    broker, port, user, pw = credentials()
+    base = f"diffuser/{device}"
+    got = {}
+    c = make_client(f"WARD_CMD_{os.getpid()}")
+
+    def on_connect(cl, _u, _f, rc):
+        if rc != 0:
+            print(f"[연결 실패] 코드 {rc}")
+            return
+        cl.subscribe(f"{base}/model/ack", qos=0)
+        cl.publish(f"{base}/cmd", cmd, qos=0, retain=False)
+        print(f"[보냄] {base}/cmd ← {cmd}")
+
+    def on_message(_c, _u, msg):
+        try:
+            d = json.loads(msg.payload.decode("utf-8", "replace"))
+        except ValueError:
+            return
+        if d.get("result") in ("rebase", "reboot"):
+            got.update(d)
+
+    c.on_connect, c.on_message = on_connect, on_message
+    c.username_pw_set(user, pw)
+    c.tls_set()
+    c.connect(broker, port, 30)
+    c.loop_start()
+    t0 = time.time()
+    while not got and time.time() - t0 < wait:
+        time.sleep(0.2)
+    c.loop_stop()
+    if got:
+        print(f"[와드 답장] {got.get('result')}  {got.get('msg', '')}  (가동 {got.get('uptime_s')}s)")
+        return 0
+    print(f"[답장 없음] {wait:.0f}초 — 와드가 꺼져 있거나, 이 명령이 없는 옛 펌웨어일 수 있음")
+    return 1
+
+
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

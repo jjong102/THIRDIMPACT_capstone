@@ -97,7 +97,7 @@ def parser():
     ap.add_argument("--track", type=float, default=0.02)
     ap.add_argument("--rebase", type=float, default=180.0, help="평평한 Air/보류 N초면 기준선 다시 잡기 (0 끔)")
     ap.add_argument("--rebase-weak", action="store_true", help="보류(Weak)에서도 기준선 다시 잡기")
-    ap.add_argument("--stuck-rebase", type=float, default=300.0, help="켜진 채 켬 쪽이 N초 평평하면 기준선 다시 (0 끔)")
+    ap.add_argument("--stuck-rebase", type=float, default=60.0, help="켜진 채 켬 쪽이 N초 평평하면 기준선 다시 (0 끔)")
     ap.add_argument("--spray-lock", type=float, default=180.0,
                     help="향 라벨 구간을 '스스로 뿌림'으로 보고, 끝난 뒤 N초까지 Unknown 으로 안 켬 (0 끔)")
     ap.add_argument("--hit-before", type=float, default=30.0, help="악취 구간 시작 몇 초 전 ON 까지 성공으로 칠지")
