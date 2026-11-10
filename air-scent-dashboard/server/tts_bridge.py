@@ -452,16 +452,26 @@ def enqueue_speak(text: str) -> dict:
     }
 
 
+def _voice_clip_labels(root: Path) -> dict:
+    """voice-clips/labels.json — 파일 이름(영어, 어느 OS 에서도 안전) → 화면 버튼 이름(한글)."""
+    try:
+        data = json.loads((root / "labels.json").read_text(encoding="utf-8"))
+        return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
 def list_voice_clips() -> list[dict]:
     root = VOICE_CLIP_DIR.resolve()
     root.mkdir(parents=True, exist_ok=True)
+    labels = _voice_clip_labels(root)
     clips = []
     for path in sorted(root.iterdir(), key=lambda item: item.name.lower()):
         if not path.is_file() or path.name.startswith("."):
             continue
         if path.suffix.lower() not in VOICE_CLIP_EXT:
             continue
-        clips.append({"file": path.name, "label": path.stem})
+        clips.append({"file": path.name, "label": labels.get(path.name, path.stem)})
     return clips
 
 
