@@ -58,6 +58,12 @@ mqtt_connected = False
 mqtt_error: str | None = None
 mqtt_brokers_up: set[str] = set()
 TOPIC_BASE = MQTT_TOPIC.split("/#")[0].rstrip("/")
+# 새 와드(온디바이스 판정) — 시연 탭 수신 로그에만 쓴다. 옛 sensor/air_quality 흐름(방 상태·악취 안내)은 그대로.
+WARD_TOPIC = os.environ.get("WARD_TOPIC", "diffuser/+/inference_ward")
+WARD_STATE_KO = {"WARMUP": "준비 중", "CLEAN": "깨끗함", "SCENT": "향기", "MALODOR": "악취",
+                 "UNKNOWN": "모르는 냄새", "HOLD": "약함"}
+WARD_LABEL_KO = {"Peppermint": "페퍼민트", "Lavender": "라벤더", "Orange": "오렌지", "Vinegar": "식초"}
+WARD_SCENT_KO = {"peppermint": "페퍼민트", "mint": "페퍼민트", "lavender": "라벤더", "orange": "오렌지"}
 MAX_LOGS = 48
 event_logs: deque[dict] = deque(maxlen=MAX_LOGS)
 _log_seq = 0
@@ -386,6 +392,9 @@ def on_connect(client, userdata, flags, rc) -> None:
         mqtt_error = None
         client.subscribe(MQTT_TOPIC)
         print(f"[mqtt-bridge] 구독: {MQTT_TOPIC} ({tag})", file=sys.stderr)
+        if WARD_TOPIC:
+            client.subscribe(WARD_TOPIC)
+            print(f"[mqtt-bridge] 구독: {WARD_TOPIC} ({tag}, 시연 탭 로그)", file=sys.stderr)
         return
 
     mqtt_brokers_up.discard(tag)
@@ -427,10 +436,49 @@ def on_disconnect(client, userdata, rc) -> None:
         _log_retry(tag, f"[mqtt-bridge] {mqtt_error}")
 
 
+def _ward_log_text(topic: str, payload: str) -> str:
+    """와드 판정 JSON → 한 줄. 예: ward-01 · 악취(식초) · 세기 40% · 표 8/8 · 청정기 ON ◀ 출동"""
+    try:
+        d = json.loads(payload)
+    except ValueError:
+        return payload[:160]
+    parts = topic.split("/")
+    ward = str(d.get("device_id") or (parts[1] if len(parts) > 1 else "ward"))
+    state = str(d.get("state") or "")
+    head = WARD_STATE_KO.get(state, state)
+    if state == "WARMUP":
+        return f"{ward} · {head} (켜진 지 {d.get('uptime_s')}초)"
+    name = WARD_LABEL_KO.get(str(d.get("label") or ""), "")
+    if name and state == "SCENT":
+        head += f"({name} 추정)"
+    elif name and state == "MALODOR":
+        head += f"({name})"
+    text = f"{ward} · {head}"
+    if d.get("strength_pct") is not None:
+        text += f" · 세기 {d.get('strength_pct')}%"
+    elif d.get("mag") is not None:
+        text += f" · 세기 {float(d.get('mag')):.2f}"
+    if d.get("votes") is not None:
+        text += f" · 표 {d.get('votes')}/{d.get('n')}"
+    if d.get("purifier") == "on":
+        text += " · 청정기 ON"
+    if d.get("spraying"):
+        sp = str(d.get("spraying"))
+        text += f" · 뿌리는 향 {WARD_SCENT_KO.get(sp.lower(), sp)}"
+    if d.get("event") == "ON":
+        text += " ◀ 출동"
+    elif d.get("event") == "OFF":
+        text += " ◀ 회복"
+    return text
+
+
 def on_message(client, userdata, msg) -> None:
     global latest
 
     payload = msg.payload.decode("utf-8", errors="replace")
+    if msg.topic.endswith("/inference_ward"):
+        append_log("mqtt", _ward_log_text(msg.topic, payload))
+        return
     parsed = parse_payload(payload)
     room_id = room_id_from_topic(msg.topic)
     stamp = datetime.now(timezone.utc).isoformat()
