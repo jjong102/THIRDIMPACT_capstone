@@ -3,7 +3,6 @@ import {
   Crosshair,
   Move,
   RefreshCw,
-  Navigation,
   Bot,
   LocateFixed,
   Wind,
@@ -43,6 +42,9 @@ import {
   sendNavGoal,
   cancelNavGoal,
   publishImpactCommand,
+  saveTaughtZone,
+  startGoalTeach,
+  yawFromRobotToMapPercent,
   yawToDisplayDeg,
 } from "../services/gdmMap";
 import { getScentVisual, readingForWard, isKitchenWard } from "../utils/scentVisual";
@@ -52,6 +54,7 @@ import { announceMoveTo, announceScentMission } from "../utils/robotAnnounce";
 import { scentLabel } from "../data/scentRecipes";
 import AiRecommendPage from "./AiRecommendPage";
 import MapScentPopover from "../components/MapScentPopover";
+import MapZoneOverlay from "../components/MapZoneOverlay";
 import {
   captureScentReturnPose,
   clearScentReturn,
@@ -297,8 +300,16 @@ function MovePage({
   const [manualControl, setManualControl] = useState(false);
   const [missionReady, setMissionReady] = useState(null);
   const [lastEvent, setLastEvent] = useState(null);
+  const [localizationState, setLocalizationState] = useState(null);
+  const [posePending, setPosePending] = useState(false);
+  const [goalStep, setGoalStep] = useState("idle");
+  const [goalBusy, setGoalBusy] = useState(false);
+  const [zoneKind, setZoneKind] = useState(null);
+  const [zoneBoxes, setZoneBoxes] = useState({ region: null, boundary: null });
+  const [zoneDragging, setZoneDragging] = useState(false);
   const [wardScents, setWardScents] = useState(loadWardScents);
   const poseDragRef = useRef(null);
+  const zoneDragRef = useRef(null);
   const destinationRef = useRef(null);
   const navEpochRef = useRef(0);
   const previousSelectedIdRef = useRef(null);
@@ -341,9 +352,34 @@ function MovePage({
     setMissionReady,
     lastEvent,
     setLastEvent,
+    localizationState,
+    setLocalizationState,
     draggingId,
     poseDragging,
   });
+
+  useEffect(() => {
+    if (!poseEstimating && dropPin) setDropPin(null);
+  }, [poseEstimating, dropPin]);
+
+  useEffect(() => {
+    if (!posePending) return;
+    if (localizationState === "READY") {
+      setPosePending(false);
+      setMoveStatus("위치 추정 완료");
+    } else if (localizationState === "SEARCH_FAILED" || localizationState === "AMBIGUOUS") {
+      setPosePending(false);
+      setMoveStatus("위치 추정을 다시 해 주세요");
+    }
+  }, [localizationState, posePending]);
+
+  useEffect(() => {
+    if (goalStep === "zones") return;
+    if (String(lastEvent || "").includes("목표 저장 완료")) {
+      setGoalStep("zones");
+      setMoveStatus("정찰 제한 구역과 한계 구역을 설정하세요");
+    }
+  }, [goalStep, lastEvent]);
 
   const commitWards = useCallback((nextWards) => {
     const snapshot = nextWards.slice(0, MAX_WARDS).map((ward) => ({ ...ward }));
@@ -719,6 +755,39 @@ function MovePage({
     };
   }, [poseDragging, updatePoseDrag, endPoseDrag]);
 
+  useEffect(() => {
+    if (!zoneDragging) return undefined;
+
+    const onMove = (event) => {
+      const drag = zoneDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      const point = placePoint(event.clientX, event.clientY);
+      if (!point) return;
+      const box = {
+        x1: drag.start.x,
+        y1: drag.start.y,
+        x2: Number(point.x.toFixed(1)),
+        y2: Number(point.y.toFixed(1)),
+      };
+      setZoneBoxes((prev) => ({ ...prev, [drag.kind]: box }));
+    };
+
+    const onUp = (event) => {
+      if (zoneDragRef.current?.pointerId !== event.pointerId) return;
+      zoneDragRef.current = null;
+      setZoneDragging(false);
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, [placePoint, zoneDragging]);
+
   const scentConversationOpen =
     scentPanelView === "chat" || scentPanelView === "text";
 
@@ -729,7 +798,28 @@ function MovePage({
       setScentPanelWardId(null);
       return;
     }
-    if (isMoving || draggingId || poseDragging) return;
+    if (isMoving || draggingId || poseDragging || zoneDragging) return;
+    if (zoneKind && !poseEstimating) {
+      const point = placePoint(event.clientX, event.clientY);
+      if (!point) return;
+      event.preventDefault();
+      const start = {
+        x: Number(point.x.toFixed(1)),
+        y: Number(point.y.toFixed(1)),
+      };
+      zoneDragRef.current = { pointerId: event.pointerId, start, kind: zoneKind };
+      setZoneDragging(true);
+      setZoneBoxes((prev) => ({
+        ...prev,
+        [zoneKind]: { x1: start.x, y1: start.y, x2: start.x, y2: start.y },
+      }));
+      try {
+        event.currentTarget.setPointerCapture?.(event.pointerId);
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
     if (!poseEstimating && locStatus === "not_localized") return;
     if (!poseEstimating && event.target.closest(".slam-ward")) return;
     if (event.target.closest(".slam-pin-actions")) return;
@@ -740,6 +830,8 @@ function MovePage({
       setSelectedId(null);
       return;
     }
+
+    if (!poseEstimating) return;
 
     const point = placePoint(event.clientX, event.clientY);
     if (!point) return;
@@ -763,11 +855,7 @@ function MovePage({
       yaw: 0,
       dragPx: 0,
     });
-    setMoveStatus(
-      poseEstimating
-        ? "드래그해서 방향을 정하세요"
-        : "드래그해서 이동 방향을 정하세요"
-    );
+    setMoveStatus("드래그해서 방향을 정하세요");
     try {
       event.currentTarget.setPointerCapture?.(event.pointerId);
     } catch {
@@ -800,7 +888,27 @@ function MovePage({
 
   const saveSelectedPin = () => {
     if (!selectedId || isMoving) return;
+    const ward = wards.find((item) => item.id === selectedId);
     commitWards(wards);
+    if (ward) {
+      const yaw = yawFromRobotToMapPercent(gdmPose, ward.x, ward.y, mapMeta, {
+        reverse: true,
+      });
+      const nextGoal = {
+        x: Number(ward.x),
+        y: Number(ward.y),
+        yaw: Number.isFinite(yaw) ? yaw : 0,
+      };
+      setNavGoal(nextGoal);
+      setDropPin(null);
+      void putMoveUi({
+        wards,
+        selectedId,
+        dropPin: null,
+        navGoal: nextGoal,
+        mode: "select",
+      }).catch(() => {});
+    }
     setMode("select");
     setMoveStatus("핀 위치 저장됨");
   };
@@ -900,18 +1008,13 @@ function MovePage({
           }
           return;
         }
-        setMoveStatus(
-          `위치 추정 (${world.x.toFixed(1)}, ${world.y.toFixed(1)}, ${yawToDisplayDeg(yaw)}°)`
-        );
+        setPosePending(true);
+        setMoveStatus("위치 추정 중");
         setPoseEstimating(false);
         setDropPin(null);
         if (previousSelectedIdRef.current) {
           setSelectedId(previousSelectedIdRef.current);
         }
-        window.setTimeout(() => {
-          setMoveStatus("위치 추정 완료");
-          window.setTimeout(() => setMoveStatus("대기"), 1800);
-        }, 900);
       } catch (error) {
         setIsMoving(false);
         if (isGoal && epoch === navEpochRef.current) {
@@ -931,6 +1034,21 @@ function MovePage({
 
     void (async () => {
       const isScent = Boolean(selectedWard && !dropPin && !poseEstimating);
+      const target = resolveTargetPercent();
+      let nextGoal = null;
+      if (target) {
+        const yaw = target.reverse
+          ? yawFromRobotToMapPercent(gdmPose, target.x, target.y, mapMeta, {
+              reverse: true,
+            })
+          : Number(dropPin?.yaw) || 0;
+        nextGoal = {
+          x: Number(target.x),
+          y: Number(target.y),
+          yaw: Number.isFinite(yaw) ? yaw : 0,
+        };
+        setNavGoal(nextGoal);
+      }
       setIsMoving(true);
       setIsNavigating(true);
       setMoveStatus("목표로 복귀");
@@ -944,6 +1062,7 @@ function MovePage({
         await putMoveUi({
           selectedId: isScent ? selectedWard.id : selectedId,
           dropPin: null,
+          ...(nextGoal ? { navGoal: nextGoal } : {}),
           isNavigating: true,
           scentMission: true,
           mode: "select",
@@ -987,14 +1106,14 @@ function MovePage({
   }, [isStopping]);
 
   const beginPoseEstimate = useCallback(() => {
-    if (isMoving || isStopping || poseDragging || isNavigating) return;
+    if (isMoving || isStopping || poseDragging) return;
     previousSelectedIdRef.current = selectedId;
     setPoseEstimating(true);
     setSelectedId(null);
     setDropPin(null);
     setMode("select");
     setMoveStatus("지도를 누른 채 드래그해 방향 화살표를 만드세요");
-  }, [isMoving, isNavigating, isStopping, poseDragging, selectedId]);
+  }, [isMoving, isStopping, poseDragging, selectedId]);
 
   const cancelPoseEstimate = useCallback(() => {
     if (isMoving) return;
@@ -1021,12 +1140,140 @@ function MovePage({
     return true;
   }, [dropPin, isMoving, isStopping, poseDragging, publishAtMapPercent]);
 
-  const notLocalized = locStatus === "not_localized";
+  const beginGoalSetup = useCallback(async () => {
+    if (goalBusy || goalStep === "launching") return;
+    setGoalBusy(true);
+    setGoalStep("launching");
+    setMoveStatus("목표 설정 모드로 전환 중");
+    try {
+      await startGoalTeach();
+      setGoalStep("save");
+      setMoveStatus("조이스틱으로 목표 위치에 세운 뒤 저장하세요");
+    } catch (error) {
+      setGoalStep("idle");
+      setMoveStatus(error?.message || "목표 설정 모드 전환 실패");
+    } finally {
+      setGoalBusy(false);
+    }
+  }, [goalBusy, goalStep]);
+
+  const saveGoalPose = useCallback(async () => {
+    if (goalBusy) return;
+    setGoalBusy(true);
+    setMoveStatus("목표 위치 저장 중");
+    try {
+      await publishImpactCommand("save_goal");
+    } catch (error) {
+      setMoveStatus(error?.message || "목표 위치 저장 실패");
+    } finally {
+      setGoalBusy(false);
+    }
+  }, [goalBusy]);
+
+  const commitZone = useCallback(async () => {
+    const box = zoneKind ? zoneBoxes[zoneKind] : null;
+    if (!zoneKind || !box || goalBusy) return;
+    const a = mapPercentToWorldMeters(box.x1, box.y1, mapMeta);
+    const b = mapPercentToWorldMeters(box.x2, box.y2, mapMeta);
+    if (!a || !b) {
+      setMoveStatus("지도 좌표를 계산하지 못했습니다");
+      return;
+    }
+    const width = Math.abs(b.x - a.x);
+    const height = Math.abs(b.y - a.y);
+    if (width < 0.3 || height < 0.3) {
+      setMoveStatus("구역을 더 크게 드래그하세요");
+      return;
+    }
+    setGoalBusy(true);
+    const zoneName = zoneKind === "region" ? "위치 제한 구역" : "한계 구역";
+    try {
+      const before = await fetchMoveUi();
+      const previousDetail = before?.robotDetail || "";
+      setMoveStatus(`${zoneName}을 주행 젯슨에 보내는 중`);
+      await saveTaughtZone({
+        kind: zoneKind,
+        x: (a.x + b.x) / 2,
+        y: (a.y + b.y) / 2,
+        yaw: 0,
+        width,
+        height,
+      });
+      let note = `${zoneName}을 주행 젯슨에 보냈습니다`;
+      for (let attempt = 0; attempt < 12; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 400));
+        const state = await fetchMoveUi();
+        const detail = state?.robotDetail || "";
+        if (!detail || detail === previousDetail) continue;
+        if (detail.includes("저장") || detail.includes("구간") || detail.includes("포함") || detail.includes("목표")) {
+          note = detail;
+          break;
+        }
+      }
+      setMoveStatus(note);
+      setZoneKind(null);
+    } catch (error) {
+      setMoveStatus(error?.message || "구역 저장 실패");
+    } finally {
+      setGoalBusy(false);
+    }
+  }, [goalBusy, mapMeta, zoneBoxes, zoneKind]);
+
+  const onZoneButton = useCallback(
+    (kind) => {
+      if (zoneKind === kind) {
+        if (zoneBoxes[kind]) void commitZone();
+        else setMoveStatus("지도를 드래그해서 구역을 먼저 그리세요");
+        return;
+      }
+      setZoneKind(kind);
+      setMoveStatus(
+        kind === "region"
+          ? "지도를 드래그해서 위치 제한 구역을 그리세요"
+          : "지도를 드래그해서 한계 구역을 그리세요. 한계는 목표를 포함해야 합니다"
+      );
+    },
+    [commitZone, zoneBoxes, zoneKind]
+  );
+
+  const zoneButtonLabel = (kind) => {
+    if (zoneKind === kind && zoneBoxes[kind]) {
+      return kind === "region" ? "위치 제한 저장" : "한계 구역 저장";
+    }
+    return kind === "region" ? "위치 제한 구역" : "한계 구역";
+  };
+
+  const locatingNow = ["VERIFYING", "SEARCHING", "LOCAL_RECHECK"].includes(localizationState);
+  const poseBusy = posePending || locatingNow;
+  const poseDone =
+    !poseEstimating &&
+    !poseBusy &&
+    (localizationState === "READY" || locStatus === "localized");
+  const poseLabel = poseEstimating
+    ? "위치 추정 저장"
+    : poseBusy
+      ? "위치 추정 중"
+      : poseDone
+        ? "위치 추정 완료"
+        : "위치 추정 하기";
+  const goalLabel =
+    goalStep === "launching"
+      ? "전환 중…"
+      : goalStep === "save"
+        ? "목표 위치 저장"
+        : goalStep === "zones"
+          ? "목표 저장됨"
+          : "목표 위치 설정";
+  const notLocalized = locStatus === "not_localized" && !poseDone;
   const notReady = missionReady === false;
   const goBlocked = notLocalized || notReady || manualControl;
-  const modeHint = poseEstimating
+  const modeHint = zoneKind
+    ? zoneKind === "region"
+      ? "지도를 드래그해서 위치 제한 구역을 그린 뒤 저장하세요"
+      : "지도를 드래그해서 한계 구역을 그린 뒤 저장하세요. 한계는 목표를 포함해야 합니다"
+    : poseEstimating
     ? dropPin
-      ? "완료를 누르면 이 위치와 방향으로 추정합니다"
+      ? "위치 추정 저장을 누르면 이 화살표로 추정을 시작합니다"
       : "지도를 누른 채 드래그하면 방향 화살표가 생깁니다"
     : manualControl
       ? "조이스틱 수동 조작 중입니다"
@@ -1037,7 +1284,7 @@ function MovePage({
       : missionPhase === "setup"
         ? "설정 모드입니다. 목표, 파란 한계, 주황 정찰 구간을 저장할 수 있습니다"
       : {
-          select: "지도를 눌러 이동 위치를 지정하거나, 집을 선택하세요",
+          select: "집을 선택하세요",
           move: "집을 드래그해 위치 수정",
         }[mode];
 
@@ -1053,7 +1300,12 @@ function MovePage({
   const showMoveNote = Boolean(moveStatus && moveStatus !== "대기" && !poseEstimating);
   const liveNote = showMoveNote ? moveStatus : lastEvent || "";
   const showModeHint =
-    poseEstimating || notLocalized || notReady || manualControl || missionPhase === "setup";
+    poseEstimating ||
+    Boolean(zoneKind) ||
+    notLocalized ||
+    notReady ||
+    manualControl ||
+    missionPhase === "setup";
 
   const selectedScreen = selectedWard
     ? mapPercentToContainer(selectedWard.x, selectedWard.y, mapLayout)
@@ -1061,6 +1313,22 @@ function MovePage({
   const dropPinScreen = dropPin
     ? mapPercentToContainer(dropPin.x, dropPin.y, mapLayout)
     : null;
+  const zoneScreens = ["region", "boundary"]
+    .map((kind) => {
+      const box = zoneBoxes[kind];
+      if (!box || !mapLayout) return null;
+      const a = mapPercentToContainer(box.x1, box.y1, mapLayout);
+      const b = mapPercentToContainer(box.x2, box.y2, mapLayout);
+      if (!a || !b) return null;
+      return {
+        kind,
+        left: Math.min(a.x, b.x),
+        top: Math.min(a.y, b.y),
+        width: Math.abs(b.x - a.x),
+        height: Math.abs(b.y - a.y),
+      };
+    })
+    .filter(Boolean);
   const navGoalScreen = navGoal
     ? mapPercentToContainer(navGoal.x, navGoal.y, mapLayout)
     : null;
@@ -1069,9 +1337,10 @@ function MovePage({
     : null;
   const hasDestination = Boolean(poseEstimating || dropPin || selectedWard);
   const scentMission = Boolean(selectedWard && !dropPin && !poseEstimating);
+  const showPatrolResume = Boolean(isNavigating);
+  const showGoButton = showPatrolResume || scentMission;
   const goBusyLabel = isMoving ? "전송 중…" : null;
-  const goLabel = goBusyLabel ?? (scentMission ? "발향청정" : "위치 이동");
-  const GoIcon = scentMission ? Wind : Navigation;
+  const goLabel = goBusyLabel ?? "발향청정";
   const scentSpraying = fragranceOn || fragranceDiffusing || sharedSpraying;
 
   const handleStopFragrance = () => {
@@ -1282,6 +1551,8 @@ function MovePage({
             </svg>
           )}
 
+          <MapZoneOverlay mapLayout={mapLayout} mapMeta={mapMeta} />
+
           {isNavigating && pathGoalScreen && robotScreen ? (
             <svg className="slam-path-svg" aria-hidden="true">
               <line
@@ -1293,6 +1564,19 @@ function MovePage({
               />
             </svg>
           ) : null}
+
+          {zoneScreens.map((zone) => (
+            <div
+              key={zone.kind}
+              className={`slam-zone-draft ${zone.kind}`}
+              style={{
+                left: `${zone.left}%`,
+                top: `${zone.top}%`,
+                width: `${zone.width}%`,
+                height: `${zone.height}%`,
+              }}
+            />
+          ))}
 
           {poseArrow ? (
             <svg className="slam-pose-svg" aria-hidden="true">
@@ -1556,7 +1840,7 @@ function MovePage({
                   disabled={isMoving || isStopping || poseDragging || !dropPin}
                 >
                   <Check size={18} />
-                  {isMoving ? "전송 중…" : "완료"}
+                  {isMoving ? "전송 중…" : "위치 추정 저장"}
                 </button>
                 {scentSpraying ? (
                   <button
@@ -1620,42 +1904,62 @@ function MovePage({
                     )}
                   </>
                 ) : (
-                  "지도를 눌러 목적지를 지정하거나, 집을 선택하세요"
+                  "집을 선택하세요"
                 )}
               </p>
 
-              <div className={`slam-selected-actions dual-pose${scentSpraying ? " with-stop" : ""}`}>
+              <div className={`slam-selected-actions dual-pose with-goal${scentSpraying ? " with-stop" : ""}`}>
                 <button
                   type="button"
-                  className={`slam-pose-btn${notLocalized ? " needed" : ""}`}
-                  onClick={beginPoseEstimate}
-                  disabled={isMoving || isStopping || isNavigating}
+                  className={`slam-pose-btn${poseDone ? " done" : ""}${poseBusy ? " busy" : ""}${!poseDone && !poseBusy ? " needed" : ""}`}
+                  onClick={() => {
+                    if (poseBusy) return;
+                    beginPoseEstimate();
+                  }}
+                  disabled={isMoving || isStopping || poseBusy}
                 >
                   <LocateFixed size={18} />
-                  위치 추정
+                  {poseLabel}
                 </button>
                 <button
                   type="button"
-                  className={`slam-go-btn ${isNavigating ? "is-stop" : ""}${isMoving && !isNavigating ? " busy" : ""}${!isNavigating && scentMission ? " scent-mission" : ""}${isStopping ? " busy" : ""}`}
-                  onClick={isNavigating || isMoving ? stopMove : startMove}
+                  className={`slam-goal-btn${goalStep === "zones" ? " done" : ""}${goalBusy ? " busy" : ""}`}
+                  onClick={() => {
+                    if (goalStep === "save") {
+                      void saveGoalPose();
+                      return;
+                    }
+                    if (goalStep === "idle") void beginGoalSetup();
+                  }}
+                  disabled={goalBusy || goalStep === "launching" || goalStep === "zones" || poseEstimating}
+                >
+                  <Crosshair size={18} />
+                  {goalBusy && goalStep !== "zones" ? "처리 중…" : goalLabel}
+                </button>
+                {showGoButton ? (
+                <button
+                  type="button"
+                  className={`slam-go-btn ${showPatrolResume ? "is-stop" : ""}${isMoving && !showPatrolResume ? " busy" : ""}${!showPatrolResume && scentMission ? " scent-mission" : ""}${isStopping ? " busy" : ""}`}
+                  onClick={showPatrolResume || isMoving ? stopMove : startMove}
                   disabled={
                     isStopping ||
                     poseDragging ||
-                    (!(isNavigating || isMoving) && goBlocked)
+                    (!(showPatrolResume || isMoving) && goBlocked)
                   }
                 >
-                  {isNavigating ? (
+                  {showPatrolResume ? (
                     <>
                       <Square size={18} strokeWidth={2.4} fill="currentColor" />
                       {isStopping ? "재개 중…" : "정찰 재개"}
                     </>
                   ) : (
                     <>
-                      <GoIcon size={18} />
+                      <Wind size={18} />
                       {isMoving ? "전송 중…" : goLabel}
                     </>
                   )}
                 </button>
+                ) : null}
                 {scentSpraying ? (
                   <button
                     type="button"
@@ -1768,6 +2072,22 @@ function MovePage({
                 >
                   <Move size={16} />
                   위치
+                </button>
+                <button
+                  type="button"
+                  className={`slam-mode-btn zone-region${zoneKind === "region" ? " active" : ""}`}
+                  onClick={() => onZoneButton("region")}
+                  disabled={goalBusy || poseEstimating}
+                >
+                  {zoneButtonLabel("region")}
+                </button>
+                <button
+                  type="button"
+                  className={`slam-mode-btn zone-boundary${zoneKind === "boundary" ? " active" : ""}`}
+                  onClick={() => onZoneButton("boundary")}
+                  disabled={goalBusy || poseEstimating}
+                >
+                  {zoneButtonLabel("boundary")}
                 </button>
               </div>
               <button

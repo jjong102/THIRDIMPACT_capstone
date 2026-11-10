@@ -367,8 +367,55 @@ export function yawFromRobotToMapPercent(
   return normalizeYaw(yaw);
 }
 
+/** 주행 구역 [x, y, yaw, width, height](m) → 지도 % 네 꼭짓점. yaw 는 가로축 방향. */
+export function orientedRectToMapPolygon(rect, mapMeta) {
+  if (!Array.isArray(rect) || rect.length < 5) return null;
+  const [cx, cy, yaw, width, height] = rect.map(Number);
+  if (
+    ![cx, cy, yaw, width, height].every(Number.isFinite) ||
+    width <= 0 ||
+    height <= 0
+  ) {
+    return null;
+  }
+
+  const cos = Math.cos(yaw);
+  const sin = Math.sin(yaw);
+  const halfW = width / 2;
+  const halfH = height / 2;
+  const corners = [
+    [-halfW, -halfH],
+    [halfW, -halfH],
+    [halfW, halfH],
+    [-halfW, halfH],
+  ];
+  const polygon = [];
+
+  for (const [lx, ly] of corners) {
+    const mapped = worldMetersToMapPercent(
+      cx + lx * cos - ly * sin,
+      cy + lx * sin + ly * cos,
+      mapMeta,
+      { clamp: false },
+    );
+    if (!mapped) return null;
+    polygon.push([mapped.x, mapped.y]);
+  }
+
+  return polygon;
+}
+
+export async function fetchPatrolZones() {
+  const response = await fetch(`${API_BASE}/api/nav/zones`);
+  if (!response.ok) {
+    throw new Error(`nav zones failed (${response.status})`);
+  }
+  const payload = await response.json().catch(() => ({}));
+  return payload?.zones ?? null;
+}
+
 /** world meters → map % (inverse of mapPercentToWorldMeters) */
-export function worldMetersToMapPercent(xM, yM, mapMeta) {
+export function worldMetersToMapPercent(xM, yM, mapMeta, { clamp = true } = {}) {
   const [imgW, imgH] = mapMeta?.image_size ?? [];
   const resolution = mapMeta?.resolution;
   const origin = mapMeta?.origin;
@@ -389,10 +436,16 @@ export function worldMetersToMapPercent(xM, yM, mapMeta) {
   const px = (Number(xM) - Number(origin[0])) / Number(resolution);
   const pyFromBottom = (Number(yM) - Number(origin[1])) / Number(resolution);
   const py = imgH - pyFromBottom;
+  const x = (px / imgW) * 100;
+  const y = (py / imgH) * 100;
+
+  if (!clamp) {
+    return { x, y };
+  }
 
   return {
-    x: Math.min(99.5, Math.max(0.5, (px / imgW) * 100)),
-    y: Math.min(99.5, Math.max(0.5, (py / imgH) * 100)),
+    x: Math.min(99.5, Math.max(0.5, x)),
+    y: Math.min(99.5, Math.max(0.5, y)),
   };
 }
 
@@ -477,6 +530,32 @@ export async function publishImpactCommand(command) {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok || !payload?.ok) {
     throw new Error(payload?.error || `command failed (${response.status})`);
+  }
+  return payload;
+}
+
+export async function startGoalTeach() {
+  const response = await fetch(`${API_BASE}/api/nav/teach/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.error || `목표 설정 전환 실패 (${response.status})`);
+  }
+  return payload;
+}
+
+export async function saveTaughtZone(zone) {
+  const response = await fetch(`${API_BASE}/api/nav/teach/zone`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(zone),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.error || `구역 저장 실패 (${response.status})`);
   }
   return payload;
 }

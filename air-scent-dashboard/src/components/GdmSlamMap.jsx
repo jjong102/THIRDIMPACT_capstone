@@ -14,6 +14,7 @@ import {
 } from "../services/gdmMap";
 import { getScentVisual, readingForWard, isKitchenWard } from "../utils/scentVisual";
 import { wardDisplayName } from "../utils/wardStorage";
+import MapZoneOverlay from "./MapZoneOverlay";
 import "../pages/MovePage.css";
 
 /**
@@ -347,6 +348,8 @@ function GdmSlamMap({
           })}
         </svg>
       )}
+
+      <MapZoneOverlay mapLayout={mapLayout} mapMeta={mapMeta} />
 
       {robotScreen ? (
         <div

@@ -82,6 +82,8 @@ export default function useMoveUiSync({
   setMissionReady,
   lastEvent,
   setLastEvent,
+  localizationState,
+  setLocalizationState,
   draggingId,
   poseDragging,
 }) {
@@ -103,6 +105,7 @@ export default function useMoveUiSync({
     manualControl,
     missionReady,
     lastEvent,
+    localizationState,
   };
 
   const rememberRev = useCallback((state) => {
@@ -203,12 +206,19 @@ export default function useMoveUiSync({
         setLastEvent?.(nextEvent);
       }
 
+      const nextLocState = raw.localizationState || null;
+      if (nextLocState !== (snapshotRef.current.localizationState || null)) {
+        applyingRemoteRef.current = true;
+        setLocalizationState?.(nextLocState);
+      }
+
       return true;
     },
     [
       setDropPin,
       setIsNavigating,
       setLastEvent,
+      setLocalizationState,
       setLocStatus,
       setManualControl,
       setMissionPhase,

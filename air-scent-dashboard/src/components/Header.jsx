@@ -120,15 +120,16 @@ function Header({
   const wifiLabel = wifi.connected
     ? `${wifi.ssid || "Wi-Fi"} · ${wifi.dbm == null ? "연결됨" : `${wifi.dbm} dBm`}`
     : "Wi-Fi 끊김";
+  const locating = ["VERIFYING", "SEARCHING", "LOCAL_RECHECK"].includes(moveUi?.localizationState);
   let robotLabel = "대기";
-  if (moveUi?.poseEstimating) robotLabel = "위치 추정";
-  else if (moveUi?.manualControl) robotLabel = "수동";
+  if (moveUi?.poseEstimating || locating) robotLabel = "위치 추정 중";
+  else if (moveUi?.robotMode === "teach" || moveUi?.missionPhase === "setup") robotLabel = "목표 설정";
+  else if (moveUi?.manualControl || moveUi?.missionPhase === "manual") robotLabel = "수동";
   else if (moveUi?.arrivalSequence?.phase === "purify") robotLabel = "청정 중";
   else if (moveUi?.arrivalSequence?.phase === "spray") robotLabel = "발향 중";
-  else if (moveUi?.missionPhase === "return" || moveUi?.isNavigating) robotLabel = "목표 복귀";
+  else if (moveUi?.missionPhase === "return") robotLabel = "목표 복귀";
   else if (moveUi?.missionPhase === "patrol") robotLabel = "정찰 중";
   else if (moveUi?.missionPhase === "wait") robotLabel = "목표 대기";
-  else if (moveUi?.missionPhase === "setup") robotLabel = "설정";
   else if (moveUi?.locStatus === "not_localized" || moveUi?.missionReady === false) {
     robotLabel = "준비 안 됨";
   }
@@ -150,6 +151,7 @@ function Header({
           <div className="header-text">
             {locationLabel === "위치 없음" ? <p>{robotLabel}</p> : null}
             <h2>{locationLabel}</h2>
+            {moveUi?.robotDetail ? <p className="header-detail">{moveUi.robotDetail}</p> : null}
           </div>
         </div>
 

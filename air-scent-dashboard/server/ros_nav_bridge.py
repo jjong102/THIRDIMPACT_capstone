@@ -19,6 +19,8 @@ from __future__ import annotations
 import json
 import math
 import os
+import shlex
+import subprocess
 import sys
 import threading
 import time
@@ -83,6 +85,7 @@ PoseWithCovarianceStamped = None
 Empty = None
 String = None
 Bool = None
+InteractiveMarkerFeedback = None
 QoSProfile = None
 ReliabilityPolicy = None
 HistoryPolicy = None
@@ -92,6 +95,9 @@ _node = None
 _initial_pub = None
 _amcl_sub = None
 _empty_pubs: dict = {}
+_zone_feedback_pubs: dict = {}
+_zone_pub = None
+_teach_lock = threading.Lock()
 _impact_subs: list = []
 _interfaces_ready = False
 _lock = threading.Lock()
@@ -124,7 +130,7 @@ ARRIVAL_HOLD_SEC = 4.0
 
 def _import_ros() -> bool:
     global rclpy, PoseStamped, PoseWithCovarianceStamped
-    global Empty, String, Bool
+    global Empty, String, Bool, InteractiveMarkerFeedback
     global QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
     try:
         import rclpy as _rclpy
@@ -137,6 +143,7 @@ def _import_ros() -> bool:
         from std_msgs.msg import Bool as _Bool
         from std_msgs.msg import Empty as _Empty
         from std_msgs.msg import String as _String
+        from visualization_msgs.msg import InteractiveMarkerFeedback as _Feedback
 
         rclpy = _rclpy
         PoseStamped = _PoseStamped
@@ -144,6 +151,7 @@ def _import_ros() -> bool:
         Empty = _Empty
         String = _String
         Bool = _Bool
+        InteractiveMarkerFeedback = _Feedback
         QoSProfile = _QoSProfile
         ReliabilityPolicy = _ReliabilityPolicy
         HistoryPolicy = _HistoryPolicy
@@ -296,16 +304,26 @@ def _status_fields(payload: object) -> tuple[str | None, bool | None, bool | Non
     if payload.get("setup") is True or payload.get("setting_mode") is True:
         phase = "setup"
     else:
-        mission = _pick(payload, ("mission", "task", "phase", "mode", "state", "임무"))
-        if isinstance(mission, dict):
-            mission = " ".join(
-                str(mission.get(key))
-                for key in ("name", "state", "mode", "phase", "status")
-                if mission.get(key) is not None
-            )
-        phase = _phase_from_text(str(mission or ""))
+        # intent/state are the live mission. Scanning the whole status matches
+        # the nested "return" object and shows a patrol as a goal return.
+        phase = None
+        intent = payload.get("intent")
+        state = payload.get("state")
+        if isinstance(intent, str) and intent.strip():
+            phase = _phase_from_text(intent)
+        if phase is None and isinstance(state, str) and state.strip():
+            phase = _phase_from_text(state)
         if phase is None:
-            phase = _phase_from_text(json.dumps(payload, ensure_ascii=False))
+            mission = _pick(payload, ("mission", "task", "phase", "mode", "state", "임무"))
+            if isinstance(mission, dict):
+                mission = " ".join(
+                    str(mission.get(key))
+                    for key in ("name", "state", "mode", "phase", "status")
+                    if mission.get(key) is not None
+                )
+            phase = _phase_from_text(str(mission or ""))
+            if phase is None:
+                phase = _phase_from_text(json.dumps(payload, ensure_ascii=False))
     ready = _as_bool(_pick(payload, ("ready", "readiness", "prepared", "준비")))
     aligned = _as_bool(_pick(payload, ("alignment", "align", "aligned", "정렬")))
     return phase, ready, aligned
@@ -347,9 +365,15 @@ def _on_arrival(_msg) -> None:
         print(f"[ros-nav-bridge] 도착 → 자동 청정·발향 {seq.start(reason='arrival')}", file=sys.stderr)
 
 
-def _motion_patch(phase: str | None) -> dict:
+def _motion_patch(phase: str | None, manual: bool) -> dict:
     patch: dict = {}
-    if _manual_control or phase == "manual":
+    if phase == "setup":
+        patch["isNavigating"] = False
+        patch["navStatus"] = None
+        patch["scentMission"] = False
+        patch["missionPhase"] = "setup"
+        return patch
+    if manual or phase == "manual":
         patch["isNavigating"] = False
         patch["missionPhase"] = "manual"
         return patch
@@ -363,6 +387,7 @@ def _motion_patch(phase: str | None) -> dict:
     if phase == "patrol":
         patch["isNavigating"] = False
         patch["navStatus"] = None
+        patch["scentMission"] = False
         return patch
     if phase == "wait":
         patch["isNavigating"] = False
@@ -382,7 +407,7 @@ def _flush_arrival_hold() -> None:
 
 
 def _on_impact_status(msg) -> None:
-    global _last_status_key, _pending_motion
+    global _last_status_key, _pending_motion, _manual_control
     raw = str(getattr(msg, "data", "") or "").strip()
     if not raw:
         return
@@ -393,20 +418,47 @@ def _on_impact_status(msg) -> None:
         except json.JSONDecodeError:
             payload = raw
     phase, ready, aligned = _status_fields(payload)
-    if _manual_control:
+    robot_mode = None
+    detail = None
+    loc_state = None
+    manual = _manual_control
+    if isinstance(payload, dict):
+        robot_mode = str(payload.get("mode") or "").strip().lower() or None
+        detail_raw = payload.get("detail")
+        if isinstance(detail_raw, str):
+            detail = detail_raw.strip()[:180] or None
+        loc = payload.get("localization")
+        if isinstance(loc, dict):
+            loc_state = str(loc.get("state") or "").strip().upper() or None
+        if "manual" in payload:
+            manual = bool(payload.get("manual"))
+            _manual_control = manual
+        if robot_mode == "teach":
+            phase = "setup"
+        elif manual:
+            phase = "manual"
+    elif manual:
         phase = "manual"
-    key = (phase, ready, aligned, _manual_control)
+    key = (phase, ready, aligned, manual, robot_mode, detail, loc_state)
     if key == _last_status_key and _pending_motion is None:
         return
     _last_status_key = key
     shown = phase if phase in MISSION_PHASES else None
     display = {
-        "missionPhase": "manual" if _manual_control else shown,
+        "missionPhase": shown,
         "missionReady": ready,
         "missionAligned": aligned,
-        "manualControl": _manual_control,
+        "manualControl": manual,
     }
-    motion = _motion_patch(shown)
+    if robot_mode:
+        display["robotMode"] = robot_mode
+    if detail:
+        display["robotDetail"] = detail
+        display["lastEvent"] = detail
+    if loc_state:
+        display["localizationState"] = loc_state
+        display["locStatus"] = "localized" if loc_state == "READY" else "not_localized"
+    motion = _motion_patch(shown, manual)
     if time.time() < _arrival_hold_until:
         _pending_motion = motion
         changed = _merge_if_changed(display)
@@ -416,7 +468,7 @@ def _on_impact_status(msg) -> None:
     if changed:
         print(
             f"[ros-nav-bridge] status phase={display.get('missionPhase')} "
-            f"ready={ready} aligned={aligned}",
+            f"ready={ready} loc={loc_state} detail={detail}",
             file=sys.stderr,
         )
 
@@ -437,6 +489,200 @@ def _on_impact_event(msg) -> None:
     _merge_if_changed({"lastEvent": text[:180]})
 
 
+# 주행 노드가 직전에 확정한 위치. RViz 화살표와 같은 /initialpose 로 한 번만 넘긴다.
+_SAVED_POSE_PATH = os.environ.get(
+    "ROS_SAVED_POSE_PATH",
+    "/home/moonshot/.ros/third_impact/goal.localization.json",
+)
+_hint_lock = threading.Lock()
+_hint_inflight = False
+_hint_armed = True
+_hint_next_at = 0.0
+
+
+_GOAL_STATE_PATH = os.environ.get(
+    "ROS_GOAL_STATE_PATH",
+    "/home/moonshot/.ros/third_impact/goal.json",
+)
+_ZONE_TTL_SEC = 3.0
+_zones_lock = threading.Lock()
+_zones_cache: dict = {"at": 0.0, "inflight": False, "zones": None}
+
+
+def _rect_or_none(value: object) -> list[float] | None:
+    if not isinstance(value, list) or len(value) != 5:
+        return None
+    try:
+        nums = [float(item) for item in value]
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(num) for num in nums) or min(nums[3], nums[4]) <= 0:
+        return None
+    return nums
+
+
+def _read_patrol_zones() -> dict | None:
+    """주행 젯슨 goal.json 의 한계(boundary)·정찰제한(rectangle). 점군은 읽지 않는다."""
+    code = (
+        "import json; "
+        f"d=json.load(open({json.dumps(_GOAL_STATE_PATH)})); "
+        "print(json.dumps({'boundary': d.get('boundary'), 'rectangle': d.get('rectangle')}))"
+    )
+    try:
+        result = subprocess.run(
+            [
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=5",
+                "robot",
+                f"python3 -c {shlex.quote(code)}",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=8,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        print(f"[ros-nav-bridge] 구역 읽기 실패: {exc}", file=sys.stderr)
+        return None
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", "replace").strip()
+        print(f"[ros-nav-bridge] 구역 없음: {detail}", file=sys.stderr)
+        return None
+    try:
+        payload = json.loads(result.stdout.decode("utf-8"))
+    except json.JSONDecodeError:
+        print("[ros-nav-bridge] 구역 형식이 아닙니다", file=sys.stderr)
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return {
+        "boundary": _rect_or_none(payload.get("boundary")),
+        "rectangle": _rect_or_none(payload.get("rectangle")),
+    }
+
+
+def patrol_zones() -> dict:
+    """중심·방향·가로·세로(m). 화면이 지도 좌표로 바꾼다."""
+    empty = {"boundary": None, "rectangle": None}
+    now = time.time()
+    with _zones_lock:
+        cached = _zones_cache["zones"]
+        if (
+            isinstance(cached, dict)
+            and now - float(_zones_cache["at"]) < _ZONE_TTL_SEC
+        ):
+            return cached
+        if _zones_cache["inflight"]:
+            return cached if isinstance(cached, dict) else empty
+        _zones_cache["inflight"] = True
+
+    zones = _read_patrol_zones()
+    with _zones_lock:
+        _zones_cache["inflight"] = False
+        _zones_cache["at"] = time.time()
+        if zones is not None:
+            _zones_cache["zones"] = zones
+        current = _zones_cache["zones"]
+        return current if isinstance(current, dict) else empty
+
+
+def _read_saved_pose() -> tuple[float, float, float, float] | None:
+    try:
+        result = subprocess.run(
+            [
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=5",
+                "robot",
+                f"cat {_SAVED_POSE_PATH}",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=8,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        print(f"[ros-nav-bridge] 저장 위치 읽기 실패: {exc}", file=sys.stderr)
+        return None
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", "replace").strip()
+        print(f"[ros-nav-bridge] 저장 위치 없음: {detail}", file=sys.stderr)
+        return None
+    try:
+        payload = json.loads(result.stdout.decode("utf-8"))
+        pose = payload.get("pose")
+        saved_at = float(payload.get("saved_at"))
+        x, y, yaw = (float(pose[0]), float(pose[1]), float(pose[2]))
+    except (json.JSONDecodeError, TypeError, ValueError, IndexError, KeyError):
+        print("[ros-nav-bridge] 저장 위치 형식이 아닙니다", file=sys.stderr)
+        return None
+    if not all(math.isfinite(value) for value in (x, y, yaw, saved_at)):
+        return None
+    return saved_at, x, y, yaw
+
+
+def _seed_saved_pose_once() -> None:
+    global _hint_inflight, _hint_armed, _hint_next_at
+    try:
+        saved = _read_saved_pose()
+        if saved is None:
+            _hint_next_at = time.time() + 20.0
+            _hint_armed = True
+            return
+        _saved_at, x, y, yaw = saved
+        if not publish_initial_pose(x, y, yaw, FRAME_ID):
+            _hint_next_at = time.time() + 20.0
+            _hint_armed = True
+            print("[ros-nav-bridge] 저장 위치 전달 실패", file=sys.stderr)
+            return
+        _hint_armed = False
+        print(
+            f"[ros-nav-bridge] 저장 위치를 초기 위치로 전달 "
+            f"x={x:.3f} y={y:.3f} yaw={yaw:.3f}",
+            file=sys.stderr,
+        )
+    finally:
+        with _hint_lock:
+            _hint_inflight = False
+
+
+def _schedule_saved_pose_seed(raw: str) -> None:
+    """지도 전체 검색이 실패하면, RViz 화살표 대신 마지막 확정 위치를 한 번 보낸다.
+
+    주행 런치를 다시 켜면 위치 노드가 준비 대기로 돌아오므로, 그때는 같은 저장 위치를 다시 보낸다.
+    """
+    global _hint_inflight, _hint_armed
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return
+    if not isinstance(parsed, dict):
+        return
+    state = str(parsed.get("state") or "")
+    if parsed.get("ready") is True or state in {
+        "WAIT_AMCL",
+        "WAIT_SENSORS",
+        "WAIT_MAP",
+        "INITIALIZING",
+    }:
+        _hint_armed = True
+        return
+    if state not in {"SEARCH_FAILED", "AMBIGUOUS"}:
+        return
+    now = time.time()
+    with _hint_lock:
+        if _hint_inflight or now < _hint_next_at or not _hint_armed:
+            return
+        _hint_inflight = True
+        _hint_armed = False
+    threading.Thread(target=_seed_saved_pose_once, daemon=True).start()
+
+
 def _on_localization(msg) -> None:
     raw = str(getattr(msg, "data", "") or "").strip()
     loc = _interpret_localization(raw)
@@ -445,6 +691,7 @@ def _on_localization(msg) -> None:
         patch["locStatus"] = loc
     if _merge_if_changed(patch):
         print(f"[ros-nav-bridge] localization {loc or raw[:80]}", file=sys.stderr)
+    _schedule_saved_pose_seed(raw)
 
 
 def _on_manual_control(msg) -> None:
@@ -454,11 +701,7 @@ def _on_manual_control(msg) -> None:
         return
     _manual_control = value
     _last_status_key = None
-    patch = {"manualControl": value}
-    if value:
-        patch["missionPhase"] = "manual"
-        patch["isNavigating"] = False
-    _merge_if_changed(patch)
+    _merge_if_changed({"manualControl": value})
     print(f"[ros-nav-bridge] manual_control {value}", file=sys.stderr)
 
 
@@ -525,7 +768,15 @@ def _ensure_mission_interfaces() -> None:
                 String, _topic_name(LOCALIZATION_TOPIC), _on_localization, volatile
             ),
             _node.create_subscription(
-                Bool, _topic_name(MANUAL_TOPIC), _on_manual_control, volatile
+                Bool,
+                _topic_name(MANUAL_TOPIC),
+                _on_manual_control,
+                QoSProfile(
+                    depth=1,
+                    reliability=ReliabilityPolicy.RELIABLE,
+                    durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                    history=HistoryPolicy.KEEP_LAST,
+                ),
             ),
             _node.create_subscription(
                 PoseStamped, _topic_name(IMPACT_GOAL_TOPIC), _on_impact_goal, volatile
@@ -553,11 +804,13 @@ def _ros_handles_alive() -> bool:
 
 
 def _reset_ros_handles() -> None:
-    global _node, _initial_pub, _amcl_sub, _interfaces_ready
+    global _node, _initial_pub, _amcl_sub, _interfaces_ready, _zone_pub
     _node = None
     _initial_pub = None
     _amcl_sub = None
+    _zone_pub = None
     _empty_pubs.clear()
+    _zone_feedback_pubs.clear()
     _impact_subs.clear()
     _interfaces_ready = False
 
@@ -775,6 +1028,137 @@ def publish_empty_command(name: str) -> dict:
     }
 
 
+def _yaw_quaternion(yaw: float) -> tuple[float, float]:
+    return math.sin(yaw / 2.0), math.cos(yaw / 2.0)
+
+
+def publish_teach_zone(kind: str, x: float, y: float, yaw: float, width: float, height: float) -> dict:
+    """드래그한 구역 좌표를 주행 젯슨 /third_impact/set_zone 으로 보낸다."""
+    global _last_error, _zone_pub
+    zone = "region" if kind in {"region", "rectangle", "exclusion"} else None
+    if kind in {"boundary", "limit"}:
+        zone = "boundary"
+    if zone is None:
+        return {"ok": False, "error": "kind must be region or boundary"}
+    if width < 0.2 or height < 0.2:
+        return {"ok": False, "error": "zone is too small"}
+    if not ensure_ros():
+        return {"ok": False, "error": _last_error or "ros not ready"}
+    assert _node is not None
+    assert String is not None
+
+    if _zone_pub is None:
+        _zone_pub = _node.create_publisher(String, "/third_impact/set_zone", 10)
+    deadline = time.monotonic() + 3.0
+    while _zone_pub.get_subscription_count() < 1 and time.monotonic() < deadline:
+        time.sleep(0.1)
+    if _zone_pub.get_subscription_count() < 1:
+        return {
+            "ok": False,
+            "error": "주행 젯슨이 구역 저장을 받고 있지 않습니다",
+        }
+    msg = String()
+    msg.data = json.dumps(
+        {
+            "kind": zone,
+            "x": float(x),
+            "y": float(y),
+            "yaw": float(yaw),
+            "width": float(width),
+            "height": float(height),
+        }
+    )
+    try:
+        _zone_pub.publish(msg)
+    except Exception as exc:  # noqa: BLE001
+        _last_error = str(exc)
+        return {"ok": False, "error": str(exc)}
+    print(
+        f"[ros-nav-bridge] → /third_impact/set_zone {zone} "
+        f"x={x:.2f} y={y:.2f} {width:.2f}x{height:.2f}",
+        file=sys.stderr,
+    )
+    return {"ok": True, "zone": zone, "topic": "/third_impact/set_zone"}
+
+
+def start_goal_teach() -> dict:
+    """주행 젯슨의 임무 런치를 멈추고 make_goal(teach)을 network:=jetson으로 켠다."""
+    if not _teach_lock.acquire(blocking=False):
+        return {"ok": False, "error": "목표 설정 전환이 이미 진행 중입니다"}
+    script = r"""
+set -u
+source /opt/ros/humble/setup.bash
+if [ -f /home/moonshot/capstone_final_ws/install/setup.bash ]; then
+  source /home/moonshot/capstone_final_ws/install/setup.bash
+fi
+if [ -f /tmp/pure_localization_install/setup.bash ]; then
+  source /tmp/pure_localization_install/setup.bash
+fi
+export ROS_DOMAIN_ID=3
+stop_group() {
+  sig=$1
+  sids=$(ps -eo sid,cmd | awk '/ros2 launch third_impact / && $0 !~ /awk/ {print $1}' | sort -u)
+  for sid in $sids; do
+    kill "-$sig" -- "-$sid" 2>/dev/null || true
+  done
+}
+stop_group INT
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  if ! pgrep -f 'ros2 launch third_impact ' >/dev/null; then
+    break
+  fi
+  sleep 1
+done
+if pgrep -f 'ros2 launch third_impact ' >/dev/null; then
+  stop_group KILL
+  sleep 1
+fi
+if pgrep -f '/third_impact/impact_node' >/dev/null; then
+  pkill -KILL -f '/third_impact/impact_node' || true
+  sleep 1
+fi
+sleep 2
+: > /tmp/make_goal_jetson_launch.log
+setsid nohup ros2 launch third_impact make_goal_launch.py network:=jetson >>/tmp/make_goal_jetson_launch.log 2>&1 </dev/null &
+echo "LAUNCH $!"
+for _ in $(seq 1 40); do
+  if grep -q 'Stop the other impact' /tmp/make_goal_jetson_launch.log; then
+    echo LOCK
+    exit 1
+  fi
+  if pgrep -f '/third_impact/impact_node' >/dev/null; then
+    echo READY
+    exit 0
+  fi
+  sleep 1
+done
+echo TIMEOUT
+exit 1
+"""
+    try:
+        result = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "robot", "bash", "-s"],
+            input=script,
+            text=True,
+            capture_output=True,
+            timeout=75,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "목표 설정 모드 전환 시간이 초과되었습니다"}
+    except OSError as exc:
+        return {"ok": False, "error": str(exc)}
+    finally:
+        _teach_lock.release()
+    output = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
+    if result.returncode == 0 and "READY" in (result.stdout or ""):
+        print("[ros-nav-bridge] make_goal teach started", file=sys.stderr)
+        return {"ok": True, "mode": "teach"}
+    tail = output[-400:]
+    print(f"[ros-nav-bridge] make_goal failed: {tail}", file=sys.stderr)
+    return {"ok": False, "error": tail or "목표 설정 모드를 켜지 못했습니다"}
+
+
 def cancel_navigation() -> dict:
     """복귀를 멈추고 정찰을 재개한다. 속도 토픽은 건드리지 않는다."""
     global _cancel_count
@@ -851,6 +1235,9 @@ def default_ui_state() -> dict:
         "arrivalId": 0,
         "lastEvent": None,
         "localizationText": None,
+        "robotDetail": None,
+        "robotMode": None,
+        "localizationState": None,
         "goalPose": None,
         "mode": "select",
         "poseEstimating": False,
@@ -970,6 +1357,12 @@ def _load_ui_state() -> dict:
     state["lastEvent"] = last_event[:180] if last_event else None
     loc_text = str(state.get("localizationText") or "").strip() or None
     state["localizationText"] = loc_text[:180] if loc_text else None
+    detail = str(state.get("robotDetail") or "").strip() or None
+    state["robotDetail"] = detail[:180] if detail else None
+    robot_mode = str(state.get("robotMode") or "").strip().lower() or None
+    state["robotMode"] = robot_mode[:24] if robot_mode else None
+    loc_state = str(state.get("localizationState") or "").strip().upper() or None
+    state["localizationState"] = loc_state[:32] if loc_state else None
     goal_pose = state.get("goalPose")
     if not isinstance(goal_pose, dict):
         state["goalPose"] = None
@@ -1067,6 +1460,15 @@ def merge_ui(patch: dict | None) -> dict:
         if "localizationText" in patch:
             text = str(patch.get("localizationText") or "").strip()
             _ui_state["localizationText"] = text[:180] or None
+        if "robotDetail" in patch:
+            text = str(patch.get("robotDetail") or "").strip()
+            _ui_state["robotDetail"] = text[:180] or None
+        if "robotMode" in patch:
+            robot_mode = str(patch.get("robotMode") or "").strip().lower()
+            _ui_state["robotMode"] = robot_mode[:24] or None
+        if "localizationState" in patch:
+            loc_state = str(patch.get("localizationState") or "").strip().upper()
+            _ui_state["localizationState"] = loc_state[:32] or None
         if "goalPose" in patch:
             goal_pose = patch.get("goalPose")
             if not isinstance(goal_pose, dict):
@@ -1144,6 +1546,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/nav/ui":
             self._send_json(200, {"ok": True, "state": snapshot_ui()})
+            return
+
+        if path == "/api/nav/zones":
+            self._send_json(200, {"ok": True, "zones": patrol_zones()})
             return
 
         if path not in ("/api/nav/health", "/api/nav/status"):
@@ -1252,6 +1658,30 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(400, {"ok": False, "error": str(exc)})
                 return
             result = publish_empty_command(command)
+            self._send_json(200 if result.get("ok") else 400, result)
+            return
+
+        if path == "/api/nav/teach/start":
+            result = start_goal_teach()
+            self._send_json(200 if result.get("ok") else 500, result)
+            return
+
+        if path == "/api/nav/teach/zone":
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length) if length else b"{}"
+            try:
+                body = json.loads(raw.decode("utf-8") if raw else "{}")
+                result = publish_teach_zone(
+                    str(body.get("kind") or ""),
+                    float(body["x"]),
+                    float(body["y"]),
+                    float(body.get("yaw") or 0.0),
+                    float(body["width"]),
+                    float(body["height"]),
+                )
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+                return
             self._send_json(200 if result.get("ok") else 400, result)
             return
 
