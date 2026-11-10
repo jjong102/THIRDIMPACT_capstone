@@ -184,6 +184,18 @@
   border-color: #fecaca;
 }
 
+.slam-mode-btn.zone-region.active {
+  color: #c2410c;
+  background: rgba(255, 237, 213, 0.85);
+  border-color: #fdba74;
+}
+
+.slam-mode-btn.zone-boundary.active {
+  color: #0369a1;
+  background: rgba(224, 242, 254, 0.85);
+  border-color: #7dd3fc;
+}
+
 /* —— Map canvas —— */
 .slam-map {
   position: relative;
@@ -339,6 +351,38 @@
   cursor: pointer;
   touch-action: manipulation;
   box-shadow: 0 6px 16px rgba(15, 23, 42, 0.12);
+  transition:
+    background 0.35s ease,
+    border-color 0.35s ease,
+    color 0.35s ease,
+    transform 0.18s ease;
+}
+
+.slam-fullscreen-swap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.slam-fullscreen-swap.is-live {
+  animation: slam-fullscreen-pop 0.42s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes slam-fullscreen-pop {
+  from {
+    opacity: 0.4;
+    transform: scale(0.82);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .slam-fullscreen-swap.is-live {
+    animation: none;
+  }
 }
 
 .slam-fullscreen-btn:active {
@@ -394,6 +438,8 @@
   transition: opacity 0.3s ease;
   pointer-events: none;
   z-index: 1;
+  transform: translate(var(--map-pan-x, 0px), var(--map-pan-y, 0px)) rotate(var(--map-rotation, 0deg)) scale(var(--map-view-scale, 1));
+  transform-origin: center center;
   /* 흰 도면 → 슬레이트 톤으로 맞춤, 흰 배경은 multiply로 녹임 */
   filter:
     grayscale(1)
@@ -426,6 +472,62 @@
   height: 100%;
   pointer-events: none;
   z-index: 4;
+}
+
+.slam-zones-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 5;
+  overflow: visible;
+}
+
+.slam-zone-boundary {
+  fill: rgba(37, 99, 235, 0.14);
+  stroke: #2563eb;
+  stroke-width: 2.5;
+  stroke-dasharray: 10 6;
+}
+
+.slam-zone-room {
+  fill: rgba(249, 115, 22, 0.34);
+  stroke: #ea580c;
+  stroke-width: 2.75;
+}
+
+.slam-zone-tag,
+.slam-zone-room-badge {
+  position: absolute;
+  z-index: 6;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.slam-zone-tag.boundary {
+  padding: 3px 8px;
+  border-radius: 999px;
+  color: #1d4ed8;
+  background: rgba(239, 246, 255, 0.94);
+  border: 1px solid rgba(37, 99, 235, 0.5);
+  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.16);
+}
+
+.slam-zone-room-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  color: #c2410c;
+  background: rgba(255, 247, 237, 0.96);
+  border: 1px solid rgba(234, 88, 12, 0.6);
+  box-shadow: 0 4px 12px rgba(194, 65, 12, 0.18);
+  transform: translate(-50%, 6px);
 }
 
 .slam-room-poly {
@@ -1231,10 +1333,14 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  height: 52px;
+  min-height: 52px;
+  height: auto;
+  padding: 8px 6px;
   border: none;
   border-radius: 12px;
-  font-size: 15px;
+  font-size: 14px;
+  line-height: 1.2;
+  text-align: center;
   font-weight: 900;
   cursor: pointer;
   touch-action: manipulation;
@@ -1267,6 +1373,87 @@
 
 .slam-pose-btn.busy {
   cursor: wait;
+}
+
+.slam-pose-btn.done {
+  background: linear-gradient(135deg, #16a34a, #15803d);
+  box-shadow: 0 8px 18px rgba(21, 128, 61, 0.28);
+}
+
+.slam-selected-actions.with-goal .slam-go-btn,
+.slam-selected-actions.with-goal .slam-stop-btn,
+.slam-zone-setup {
+  grid-column: 1 / -1;
+}
+
+.slam-goal-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 52px;
+  height: auto;
+  padding: 8px 6px;
+  border: none;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1.2;
+  text-align: center;
+  cursor: pointer;
+  touch-action: manipulation;
+  color: #ffffff;
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  box-shadow: 0 8px 18px rgba(29, 78, 216, 0.28);
+}
+
+.slam-goal-btn.region {
+  background: linear-gradient(135deg, #ea580c, #c2410c);
+}
+
+.slam-goal-btn.boundary {
+  background: linear-gradient(135deg, #0284c7, #0369a1);
+}
+
+.slam-goal-btn.armed {
+  outline: 3px solid rgba(255, 255, 255, 0.85);
+}
+
+.slam-goal-btn.done {
+  background: linear-gradient(135deg, #16a34a, #15803d);
+}
+
+.slam-goal-btn:disabled,
+.slam-goal-btn.busy {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.slam-zone-setup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.slam-zone-setup p {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-sub, #57534e);
+}
+
+.slam-zone-draft {
+  position: absolute;
+  border: 2px dashed #ea580c;
+  background: rgba(234, 88, 12, 0.18);
+  pointer-events: none;
+  z-index: 4;
+}
+
+.slam-zone-draft.boundary {
+  border-color: #0284c7;
+  background: rgba(2, 132, 199, 0.16);
 }
 
 .slam-empty {

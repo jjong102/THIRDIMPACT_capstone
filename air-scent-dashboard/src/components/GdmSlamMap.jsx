@@ -1,18 +1,20 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Bot, House } from "lucide-react";
 
+import useActiveRobotMap from "../hooks/useActiveRobotMap";
 import useGdmRobotPose from "../hooks/useGdmRobotPose";
 import {
   GDM_FLOORPLAN_URL,
   computeContainLayout,
+  displayYawCss,
   fetchGdmRooms,
   mapPercentToContainer,
   poseToMapPercent,
   roomsToWards,
-  yawToCssDeg,
 } from "../services/gdmMap";
 import { getScentVisual, readingForWard, isKitchenWard } from "../utils/scentVisual";
 import { wardDisplayName } from "../utils/wardStorage";
+import MapZoneOverlay from "./MapZoneOverlay";
 import "../pages/MovePage.css";
 
 /**
@@ -36,8 +38,16 @@ function GdmSlamMap({
   const [roomPolys, setRoomPolys] = useState([]);
 
   const { pose: gdmPose, status: gdmStatus } = useGdmRobotPose(true);
+  const robotMap = useActiveRobotMap();
 
   useEffect(() => {
+    if (robotMap.status === "loading") return undefined;
+    if (robotMap.meta) {
+      setMapMeta(robotMap.meta);
+      setRoomPolys([]);
+      return undefined;
+    }
+
     let cancelled = false;
 
     (async () => {
@@ -67,7 +77,12 @@ function GdmSlamMap({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [robotMap.status, robotMap.signature, robotMap.meta]);
+
+  const mapRotation = robotMap.rotation || 0;
+  const mapZoom = robotMap.zoom || 100;
+  const mapCenterX = Number.isFinite(Number(robotMap.centerX)) ? Number(robotMap.centerX) : 50;
+  const mapCenterY = Number.isFinite(Number(robotMap.centerY)) ? Number(robotMap.centerY) : 50;
 
   const updateLayout = useCallback(() => {
     const container = mapRef.current;
@@ -79,12 +94,16 @@ function GdmSlamMap({
         container.clientWidth,
         container.clientHeight,
         img.naturalWidth,
-        img.naturalHeight
+        img.naturalHeight,
+        mapRotation,
+        mapZoom,
+        mapCenterX,
+        mapCenterY,
       )
     );
-  }, []);
+  }, [mapRotation, mapZoom, mapCenterX, mapCenterY]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!mapReady) return undefined;
     updateLayout();
     const container = mapRef.current;
@@ -152,17 +171,26 @@ function GdmSlamMap({
     <div
       ref={mapRef}
       className={`slam-map home-gdm-map ${className}`.trim()}
+      style={{
+        "--map-rotation": `${mapLayout?.rotation ?? mapRotation}deg`,
+        "--map-view-scale": mapLayout?.viewScale ?? mapZoom / 100,
+        "--map-pan-x": `${mapLayout?.panX ?? 0}px`,
+        "--map-pan-y": `${mapLayout?.panY ?? 0}px`,
+      }}
       role="img"
       aria-label="GDM SLAM 지도"
     >
       <div className="slam-map-surface" aria-hidden="true">
         <div className="slam-map-base" />
         <div className="slam-map-grid" />
-        {!mapFailed && (
+        {!mapFailed && robotMap.status !== "loading" && (
           <img
             ref={imgRef}
             className={`slam-map-image ${mapReady ? "ready" : ""}`}
-            src={`${GDM_FLOORPLAN_URL}?t=${gdmStatus.map ?? "map"}`}
+            src={
+              robotMap.imageUrl ??
+              `${GDM_FLOORPLAN_URL}?t=${gdmStatus.map ?? "map"}`
+            }
             alt=""
             draggable={false}
             onLoad={() => {
@@ -182,8 +210,10 @@ function GdmSlamMap({
         >
           <p className="slam-fallback-label">
             {mapFailed
-              ? "GDM floor_plan PNG를 찾을 수 없습니다 (gdm-bridge 확인)"
-              : "GDM 지도 불러오는 중…"}
+              ? robotMap.imageUrl
+                ? "주행 맵을 불러오지 못했습니다"
+                : "GDM floor_plan PNG를 찾을 수 없습니다 (gdm-bridge 확인)"
+              : "지도 불러오는 중…"}
           </p>
         </div>
       </div>
@@ -319,6 +349,8 @@ function GdmSlamMap({
         </svg>
       )}
 
+      <MapZoneOverlay mapLayout={mapLayout} mapMeta={mapMeta} />
+
       {robotScreen ? (
         <div
           className="slam-robot live"
@@ -335,9 +367,9 @@ function GdmSlamMap({
         >
           <span
             className="slam-robot-heading"
-            style={{
-              transform: `rotate(${yawToCssDeg(robotMapPos?.yaw ?? 0)}deg)`,
-            }}
+              style={{
+                transform: `rotate(${displayYawCss(robotMapPos?.yaw ?? 0, mapLayout?.rotation)}deg)`,
+              }}
             aria-hidden="true"
           >
             <span className="slam-robot-nose" />

@@ -8,6 +8,7 @@ export const TTS_SPRAY = TTS_PURIFY;
 export const TTS_SPRAY_COMPLETE = "향기 분사가 완료되었습니다.";
 export const TTS_COMPLETE = TTS_SPRAY_COMPLETE;
 export const TTS_RETURN = "초기위치로 돌아갑니다.";
+export const TTS_RESUME_PATROL = "정찰을 다시 시작합니다.";
 export const TTS_COMPLETE_AND_RETURN = `${TTS_SPRAY_COMPLETE} ${TTS_RETURN}`;
 export const TTS_ODOR_LIVING = "거실에서 악취를 감지했습니다.";
 
@@ -129,6 +130,10 @@ export function announceComplete() {
 
 export function announceReturnHome(arrivalKey = "") {
   sayOnce("returnHome", TTS_RETURN, 15000, arrivalKey);
+}
+
+export function announceResumePatrol(arrivalKey = "") {
+  sayOnce("returnHome", TTS_RESUME_PATROL, 15000, arrivalKey);
 }
 
 export function announceCompleteAndReturn(arrivalKey = "") {

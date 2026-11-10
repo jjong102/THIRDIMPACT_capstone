@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Crosshair,
   Move,
   RefreshCw,
-  Navigation,
   Bot,
   LocateFixed,
   Wind,
@@ -26,21 +25,26 @@ import {
   saveWards,
   wardDisplayName,
 } from "../utils/wardStorage";
+import useActiveRobotMap from "../hooks/useActiveRobotMap";
 import useGdmRobotPose from "../hooks/useGdmRobotPose";
 import {
   GDM_FLOORPLAN_URL,
   computeContainLayout,
   containerPointToMapPercent,
+  displayYawCss,
   fetchGdmRooms,
   mapPercentToContainer,
   mapPercentToWorldMeters,
   poseToMapPercent,
   roomsToWards,
+  screenDragToMapYaw,
   sendInitialPose,
   sendNavGoal,
   cancelNavGoal,
+  publishImpactCommand,
+  saveTaughtZone,
+  startGoalTeach,
   yawFromRobotToMapPercent,
-  yawToCssDeg,
   yawToDisplayDeg,
 } from "../services/gdmMap";
 import { getScentVisual, readingForWard, isKitchenWard } from "../utils/scentVisual";
@@ -50,6 +54,7 @@ import { announceMoveTo, announceScentMission } from "../utils/robotAnnounce";
 import { scentLabel } from "../data/scentRecipes";
 import AiRecommendPage from "./AiRecommendPage";
 import MapScentPopover from "../components/MapScentPopover";
+import MapZoneOverlay from "../components/MapZoneOverlay";
 import {
   captureScentReturnPose,
   clearScentReturn,
@@ -59,6 +64,99 @@ import {
   subscribeDeveloperMode,
 } from "../utils/developerMode";
 import "./MovePage.css";
+
+const MAP_MORPH_MS = 520;
+const MAP_MORPH_EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
+const MAP_STAGE_RADIUS = 16;
+
+function plainRect(rect) {
+  return {
+    left: rect.left,
+    top: rect.top,
+    width: rect.width,
+    height: rect.height,
+  };
+}
+
+function elementScale(el) {
+  const transform = window.getComputedStyle(el).transform;
+  if (!transform || transform === "none") return { x: 1, y: 1 };
+  const matrix = new DOMMatrix(transform);
+  return {
+    x: Math.hypot(matrix.a, matrix.b) || 1,
+    y: Math.hypot(matrix.c, matrix.d) || 1,
+  };
+}
+
+function captureStageSnap(el) {
+  const scale = elementScale(el);
+  const radius = Number.parseFloat(window.getComputedStyle(el).borderTopLeftRadius) || 0;
+  return {
+    rect: plainRect(el.getBoundingClientRect()),
+    radius: radius * Math.min(scale.x, scale.y),
+  };
+}
+
+function morphTransform(layout, visual) {
+  const sx = visual.width / Math.max(layout.width, 1);
+  const sy = visual.height / Math.max(layout.height, 1);
+  const dx = visual.left - layout.left;
+  const dy = visual.top - layout.top;
+  return { sx, sy, dx, dy };
+}
+
+function clearStageMorph(el) {
+  if (!el) return;
+  el.style.transition = "";
+  el.style.transform = "";
+  el.style.transformOrigin = "";
+  el.style.borderRadius = "";
+  el.style.willChange = "";
+}
+
+function runStageMorph(el, fromRect, toRect, fromRadius, toRadius, onDone) {
+  el.style.transition = "none";
+  el.style.transform = "none";
+  el.style.borderRadius = "";
+  const layout = plainRect(el.getBoundingClientRect());
+  const destination = toRect ?? layout;
+  const from = morphTransform(layout, fromRect);
+  const to = morphTransform(layout, destination);
+  const fromScale = Math.min(Math.abs(from.sx), Math.abs(from.sy)) || 1;
+  const toScale = Math.min(Math.abs(to.sx), Math.abs(to.sy)) || 1;
+
+  const write = (pose, radius) => {
+    el.style.transformOrigin = "0 0";
+    el.style.transform = `translate(${pose.dx}px, ${pose.dy}px) scale(${pose.sx}, ${pose.sy})`;
+    el.style.borderRadius = `${radius}px`;
+  };
+
+  el.style.willChange = "transform, border-radius";
+  write(from, fromRadius / fromScale);
+  void el.offsetWidth;
+  el.style.transition = `transform ${MAP_MORPH_MS}ms ${MAP_MORPH_EASE}, border-radius ${MAP_MORPH_MS}ms ${MAP_MORPH_EASE}`;
+  write(to, toRadius / toScale);
+
+  let settled = false;
+  const finish = () => {
+    if (settled) return;
+    settled = true;
+    el.removeEventListener("transitionend", onEnd);
+    window.clearTimeout(timer);
+    onDone?.();
+  };
+  const onEnd = (event) => {
+    if (event.target !== el || event.propertyName !== "transform") return;
+    finish();
+  };
+  el.addEventListener("transitionend", onEnd);
+  const timer = window.setTimeout(finish, MAP_MORPH_MS + 90);
+  return () => {
+    settled = true;
+    el.removeEventListener("transitionend", onEnd);
+    window.clearTimeout(timer);
+  };
+}
 
 const GDM_SYNC_KEY = "air-scent-wards-gdm-synced";
 const SCENT_BURST_ANGLES = [0, 60, 120, 180, 240, 300];
@@ -78,12 +176,79 @@ function MovePage({
 }) {
   const mapRef = useRef(null);
   const imgRef = useRef(null);
+  const stageRef = useRef(null);
+  const mapAnimatingRef = useRef(false);
   const [mapExpanded, setMapExpanded] = useState(false);
+  const [stageFixed, setStageFixed] = useState(false);
+  const [morphSnap, setMorphSnap] = useState(null);
 
-  useEffect(() => {
+  const toggleMapExpanded = () => {
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const next = !mapExpanded;
+    if (reduce) {
+      setMorphSnap(null);
+      setMapExpanded(next);
+      setStageFixed(next);
+      return;
+    }
+    if (stageRef.current) setMorphSnap(captureStageSnap(stageRef.current));
+    setMapExpanded(next);
+    if (next) setStageFixed(true);
+  };
+
+  useLayoutEffect(() => {
     document.body.classList.toggle("map-expanded", mapExpanded);
     return () => document.body.classList.remove("map-expanded");
   }, [mapExpanded]);
+
+  useLayoutEffect(() => {
+    const el = stageRef.current;
+    if (!el) return undefined;
+
+    if (!stageFixed) {
+      clearStageMorph(el);
+      mapAnimatingRef.current = false;
+      return undefined;
+    }
+
+    if (!morphSnap) return undefined;
+
+    if (!mapExpanded) {
+      const page = el.closest(".move-page");
+      const box = page?.getBoundingClientRect();
+      if (!box) return undefined;
+      mapAnimatingRef.current = true;
+      const cancel = runStageMorph(
+        el,
+        morphSnap.rect,
+        plainRect(box),
+        morphSnap.radius,
+        MAP_STAGE_RADIUS,
+        () => setStageFixed(false)
+      );
+      return () => {
+        cancel();
+        mapAnimatingRef.current = false;
+      };
+    }
+
+    mapAnimatingRef.current = true;
+    const cancel = runStageMorph(
+      el,
+      morphSnap.rect,
+      null,
+      morphSnap.radius,
+      0,
+      () => {
+        clearStageMorph(el);
+        mapAnimatingRef.current = false;
+      }
+    );
+    return () => {
+      cancel();
+      mapAnimatingRef.current = false;
+    };
+  }, [mapExpanded, morphSnap, stageFixed]);
   const [wards, setWards] = useState(loadWards);
   const [savedWards, setSavedWards] = useState(loadWards);
   const [selectedId, setSelectedId] = useState(
@@ -108,6 +273,9 @@ function MovePage({
   const [draggingId, setDraggingId] = useState(null);
   const dragRef = useRef(null);
   const [mapMeta, setMapMeta] = useState(null);
+  const robotMap = useActiveRobotMap();
+  const robotMapRef = useRef(robotMap);
+  robotMapRef.current = robotMap;
   const [dropPin, setDropPin] = useState(null);
   const [destinationCollapsed, setDestinationCollapsed] = useState(false);
   const [destinationHeight, setDestinationHeight] = useState(null);
@@ -128,8 +296,20 @@ function MovePage({
   const [poseDragging, setPoseDragging] = useState(false);
   const [poseEstimating, setPoseEstimating] = useState(false);
   const [locStatus, setLocStatus] = useState(null);
+  const [missionPhase, setMissionPhase] = useState(null);
+  const [manualControl, setManualControl] = useState(false);
+  const [missionReady, setMissionReady] = useState(null);
+  const [lastEvent, setLastEvent] = useState(null);
+  const [localizationState, setLocalizationState] = useState(null);
+  const [posePending, setPosePending] = useState(false);
+  const [goalStep, setGoalStep] = useState("idle");
+  const [goalBusy, setGoalBusy] = useState(false);
+  const [zoneKind, setZoneKind] = useState(null);
+  const [zoneBoxes, setZoneBoxes] = useState({ region: null, boundary: null });
+  const [zoneDragging, setZoneDragging] = useState(false);
   const [wardScents, setWardScents] = useState(loadWardScents);
   const poseDragRef = useRef(null);
+  const zoneDragRef = useRef(null);
   const destinationRef = useRef(null);
   const navEpochRef = useRef(0);
   const previousSelectedIdRef = useRef(null);
@@ -164,9 +344,42 @@ function MovePage({
     setPoseEstimating,
     locStatus,
     setLocStatus,
+    missionPhase,
+    setMissionPhase,
+    manualControl,
+    setManualControl,
+    missionReady,
+    setMissionReady,
+    lastEvent,
+    setLastEvent,
+    localizationState,
+    setLocalizationState,
     draggingId,
     poseDragging,
   });
+
+  useEffect(() => {
+    if (!poseEstimating && dropPin) setDropPin(null);
+  }, [poseEstimating, dropPin]);
+
+  useEffect(() => {
+    if (!posePending) return;
+    if (localizationState === "READY") {
+      setPosePending(false);
+      setMoveStatus("위치 추정 완료");
+    } else if (localizationState === "SEARCH_FAILED" || localizationState === "AMBIGUOUS") {
+      setPosePending(false);
+      setMoveStatus("위치 추정을 다시 해 주세요");
+    }
+  }, [localizationState, posePending]);
+
+  useEffect(() => {
+    if (goalStep === "zones") return;
+    if (String(lastEvent || "").includes("목표 저장 완료")) {
+      setGoalStep("zones");
+      setMoveStatus("정찰 제한 구역과 한계 구역을 설정하세요");
+    }
+  }, [goalStep, lastEvent]);
 
   const commitWards = useCallback((nextWards) => {
     const snapshot = nextWards.slice(0, MAX_WARDS).map((ward) => ({ ...ward }));
@@ -187,6 +400,13 @@ function MovePage({
     );
   }, [wards, savedWards, selectedId]);
 
+  const mapRotation = robotMap.rotation || 0;
+  const mapZoom = robotMap.zoom || 100;
+  const mapCenterX = Number.isFinite(Number(robotMap.centerX)) ? Number(robotMap.centerX) : 50;
+  const mapCenterY = Number.isFinite(Number(robotMap.centerY)) ? Number(robotMap.centerY) : 50;
+  const mapRotationRef = useRef(0);
+  mapRotationRef.current = mapRotation;
+
   const updateLayout = useCallback(() => {
     const container = mapRef.current;
     const img = imgRef.current;
@@ -197,12 +417,16 @@ function MovePage({
         container.clientWidth,
         container.clientHeight,
         img.naturalWidth,
-        img.naturalHeight
+        img.naturalHeight,
+        mapRotation,
+        mapZoom,
+        mapCenterX,
+        mapCenterY,
       )
     );
-  }, []);
+  }, [mapRotation, mapZoom, mapCenterX, mapCenterY]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!mapReady) return undefined;
     updateLayout();
     const container = mapRef.current;
@@ -216,6 +440,11 @@ function MovePage({
   const importGdmRooms = useCallback(async () => {
     setGdmImporting(true);
     try {
+      if (robotMapRef.current.meta) {
+        setMapMeta(robotMapRef.current.meta);
+        setRoomPolys([]);
+        return;
+      }
       const payload = await fetchGdmRooms();
       setMapMeta({
         resolution: payload?.resolution ?? null,
@@ -312,8 +541,14 @@ function MovePage({
   }, [commitWards]);
 
   useEffect(() => {
+    if (robotMap.status === "loading") return;
+    if (robotMap.meta) {
+      setMapMeta(robotMap.meta);
+      setRoomPolys([]);
+      return;
+    }
     importGdmRooms();
-  }, [importGdmRooms]);
+  }, [robotMap.status, robotMap.signature, robotMap.meta, importGdmRooms]);
 
   useEffect(() => {
     let cancelled = false;
@@ -417,7 +652,7 @@ function MovePage({
   const placePoint = useCallback(
     (clientX, clientY) => {
       const el = mapRef.current;
-      if (!el) return null;
+      if (!el || mapAnimatingRef.current) return null;
       const rect = el.getBoundingClientRect();
       return containerPointToMapPercent(clientX, clientY, rect, mapLayout);
     },
@@ -479,7 +714,8 @@ function MovePage({
     const dx = clientX - drag.startClient.x;
     const dy = clientY - drag.startClient.y;
     const dragPx = Math.hypot(dx, dy);
-    const yaw = dragPx < 16 ? drag.startYaw : Math.atan2(-dy, dx);
+    const yaw =
+      dragPx < 16 ? drag.startYaw : screenDragToMapYaw(dx, dy, mapRotationRef.current);
 
     setDropPin({
       x: drag.start.x,
@@ -519,16 +755,71 @@ function MovePage({
     };
   }, [poseDragging, updatePoseDrag, endPoseDrag]);
 
+  useEffect(() => {
+    if (!zoneDragging) return undefined;
+
+    const onMove = (event) => {
+      const drag = zoneDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      const point = placePoint(event.clientX, event.clientY);
+      if (!point) return;
+      const box = {
+        x1: drag.start.x,
+        y1: drag.start.y,
+        x2: Number(point.x.toFixed(1)),
+        y2: Number(point.y.toFixed(1)),
+      };
+      setZoneBoxes((prev) => ({ ...prev, [drag.kind]: box }));
+    };
+
+    const onUp = (event) => {
+      if (zoneDragRef.current?.pointerId !== event.pointerId) return;
+      zoneDragRef.current = null;
+      setZoneDragging(false);
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, [placePoint, zoneDragging]);
+
   const scentConversationOpen =
     scentPanelView === "chat" || scentPanelView === "text";
 
   const handleMapPointer = (event) => {
+    if (mapAnimatingRef.current) return;
     if (scentConversationOpen) return;
     if (scentPanelWardId && !event.target.closest(".slam-ward")) {
       setScentPanelWardId(null);
       return;
     }
-    if (isMoving || draggingId || poseDragging) return;
+    if (isMoving || draggingId || poseDragging || zoneDragging) return;
+    if (zoneKind && !poseEstimating) {
+      const point = placePoint(event.clientX, event.clientY);
+      if (!point) return;
+      event.preventDefault();
+      const start = {
+        x: Number(point.x.toFixed(1)),
+        y: Number(point.y.toFixed(1)),
+      };
+      zoneDragRef.current = { pointerId: event.pointerId, start, kind: zoneKind };
+      setZoneDragging(true);
+      setZoneBoxes((prev) => ({
+        ...prev,
+        [zoneKind]: { x1: start.x, y1: start.y, x2: start.x, y2: start.y },
+      }));
+      try {
+        event.currentTarget.setPointerCapture?.(event.pointerId);
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
     if (!poseEstimating && locStatus === "not_localized") return;
     if (!poseEstimating && event.target.closest(".slam-ward")) return;
     if (event.target.closest(".slam-pin-actions")) return;
@@ -539,6 +830,8 @@ function MovePage({
       setSelectedId(null);
       return;
     }
+
+    if (!poseEstimating) return;
 
     const point = placePoint(event.clientX, event.clientY);
     if (!point) return;
@@ -562,11 +855,7 @@ function MovePage({
       yaw: 0,
       dragPx: 0,
     });
-    setMoveStatus(
-      poseEstimating
-        ? "드래그해서 방향을 정하세요"
-        : "드래그해서 이동 방향을 정하세요"
-    );
+    setMoveStatus("드래그해서 방향을 정하세요");
     try {
       event.currentTarget.setPointerCapture?.(event.pointerId);
     } catch {
@@ -599,7 +888,27 @@ function MovePage({
 
   const saveSelectedPin = () => {
     if (!selectedId || isMoving) return;
+    const ward = wards.find((item) => item.id === selectedId);
     commitWards(wards);
+    if (ward) {
+      const yaw = yawFromRobotToMapPercent(gdmPose, ward.x, ward.y, mapMeta, {
+        reverse: true,
+      });
+      const nextGoal = {
+        x: Number(ward.x),
+        y: Number(ward.y),
+        yaw: Number.isFinite(yaw) ? yaw : 0,
+      };
+      setNavGoal(nextGoal);
+      setDropPin(null);
+      void putMoveUi({
+        wards,
+        selectedId,
+        dropPin: null,
+        navGoal: nextGoal,
+        mode: "select",
+      }).catch(() => {});
+    }
     setMode("select");
     setMoveStatus("핀 위치 저장됨");
   };
@@ -699,18 +1008,13 @@ function MovePage({
           }
           return;
         }
-        setMoveStatus(
-          `위치 추정 (${world.x.toFixed(1)}, ${world.y.toFixed(1)}, ${yawToDisplayDeg(yaw)}°)`
-        );
+        setPosePending(true);
+        setMoveStatus("위치 추정 중");
         setPoseEstimating(false);
         setDropPin(null);
         if (previousSelectedIdRef.current) {
           setSelectedId(previousSelectedIdRef.current);
         }
-        window.setTimeout(() => {
-          setMoveStatus("위치 추정 완료");
-          window.setTimeout(() => setMoveStatus("대기"), 1800);
-        }, 900);
       } catch (error) {
         setIsMoving(false);
         if (isGoal && epoch === navEpochRef.current) {
@@ -725,53 +1029,53 @@ function MovePage({
   );
 
   const startMove = () => {
-    if (isMoving || isStopping || poseEstimating) return;
-    if (locStatus === "not_localized") return;
-    const target = resolveTargetPercent();
-    if (!target) return;
-    if (!dropPin && selectedWard && selectedPinDirty) return;
-
-    const yaw = yawFromRobotToMapPercent(
-      gdmPose,
-      target.x,
-      target.y,
-      mapMeta,
-      { reverse: Boolean(target.reverse) },
-    );
+    if (isMoving || isStopping || poseEstimating || manualControl) return;
+    if (locStatus === "not_localized" || missionReady === false) return;
 
     void (async () => {
       const isScent = Boolean(selectedWard && !dropPin && !poseEstimating);
+      const target = resolveTargetPercent();
+      let nextGoal = null;
+      if (target) {
+        const yaw = target.reverse
+          ? yawFromRobotToMapPercent(gdmPose, target.x, target.y, mapMeta, {
+              reverse: true,
+            })
+          : Number(dropPin?.yaw) || 0;
+        nextGoal = {
+          x: Number(target.x),
+          y: Number(target.y),
+          yaw: Number.isFinite(yaw) ? yaw : 0,
+        };
+        setNavGoal(nextGoal);
+      }
+      setIsMoving(true);
+      setIsNavigating(true);
+      setMoveStatus("목표로 복귀");
       if (isScent) {
         await captureScentReturnPose(gdmPose, mapMeta);
       } else {
         clearScentReturn();
       }
       try {
+        await sendNavGoal({ x: 0, y: 0, yaw: 0, frame_id: "map" });
         await putMoveUi({
-          selectedId: isScent ? selectedWard.id : null,
-          dropPin: dropPin
-            ? {
-                x: Number(dropPin.x),
-                y: Number(dropPin.y),
-                yaw: Number(dropPin.yaw) || 0,
-                dragPx: Number(dropPin.dragPx) || 0,
-              }
-            : null,
-          navGoal: { x: Number(target.x), y: Number(target.y), yaw },
+          selectedId: isScent ? selectedWard.id : selectedId,
+          dropPin: null,
+          ...(nextGoal ? { navGoal: nextGoal } : {}),
           isNavigating: true,
-          scentMission: isScent,
+          scentMission: true,
           mode: "select",
         });
-      } catch {
-        // nav goal still goes out
+        setIsMoving(false);
+        setMoveStatus("목표로 복귀 중");
+        if (isScent) announceScentMission(selectedWard);
+        else announceMoveTo("목표");
+      } catch (error) {
+        setIsMoving(false);
+        setIsNavigating(false);
+        setMoveStatus(error?.message || "목표 복귀 실패");
       }
-      await publishAtMapPercent(
-        "goal",
-        target.x,
-        target.y,
-        target.label,
-        yaw,
-      );
     })();
   };
 
@@ -779,7 +1083,7 @@ function MovePage({
     if (isStopping) return;
     navEpochRef.current += 1;
     setIsStopping(true);
-    setMoveStatus("정지 중");
+    setMoveStatus("정찰 재개");
     try {
       await cancelNavGoal();
       clearScentReturn();
@@ -788,28 +1092,28 @@ function MovePage({
       try {
         await putMoveUi({ isNavigating: false, scentMission: false });
       } catch {
-        // cancel already applied
+        // go_around already applied
       }
-      setMoveStatus("정지");
+      setMoveStatus("정찰 중");
       window.setTimeout(() => {
-        setMoveStatus((current) => (current === "정지" ? "대기" : current));
+        setMoveStatus((current) => (current === "정찰 중" ? "대기" : current));
       }, 1800);
     } catch (error) {
-      setMoveStatus(error?.message || "정지 실패");
+      setMoveStatus(error?.message || "정찰 재개 실패");
     } finally {
       setIsStopping(false);
     }
   }, [isStopping]);
 
   const beginPoseEstimate = useCallback(() => {
-    if (isMoving || isStopping || poseDragging || isNavigating) return;
+    if (isMoving || isStopping || poseDragging) return;
     previousSelectedIdRef.current = selectedId;
     setPoseEstimating(true);
     setSelectedId(null);
     setDropPin(null);
     setMode("select");
     setMoveStatus("지도를 누른 채 드래그해 방향 화살표를 만드세요");
-  }, [isMoving, isNavigating, isStopping, poseDragging, selectedId]);
+  }, [isMoving, isStopping, poseDragging, selectedId]);
 
   const cancelPoseEstimate = useCallback(() => {
     if (isMoving) return;
@@ -836,25 +1140,172 @@ function MovePage({
     return true;
   }, [dropPin, isMoving, isStopping, poseDragging, publishAtMapPercent]);
 
-  const notLocalized = locStatus === "not_localized";
-  const modeHint = poseEstimating
+  const beginGoalSetup = useCallback(async () => {
+    if (goalBusy || goalStep === "launching") return;
+    setGoalBusy(true);
+    setGoalStep("launching");
+    setMoveStatus("목표 설정 모드로 전환 중");
+    try {
+      await startGoalTeach();
+      setGoalStep("save");
+      setMoveStatus("조이스틱으로 목표 위치에 세운 뒤 저장하세요");
+    } catch (error) {
+      setGoalStep("idle");
+      setMoveStatus(error?.message || "목표 설정 모드 전환 실패");
+    } finally {
+      setGoalBusy(false);
+    }
+  }, [goalBusy, goalStep]);
+
+  const saveGoalPose = useCallback(async () => {
+    if (goalBusy) return;
+    setGoalBusy(true);
+    setMoveStatus("목표 위치 저장 중");
+    try {
+      await publishImpactCommand("save_goal");
+    } catch (error) {
+      setMoveStatus(error?.message || "목표 위치 저장 실패");
+    } finally {
+      setGoalBusy(false);
+    }
+  }, [goalBusy]);
+
+  const commitZone = useCallback(async () => {
+    const box = zoneKind ? zoneBoxes[zoneKind] : null;
+    if (!zoneKind || !box || goalBusy) return;
+    const a = mapPercentToWorldMeters(box.x1, box.y1, mapMeta);
+    const b = mapPercentToWorldMeters(box.x2, box.y2, mapMeta);
+    if (!a || !b) {
+      setMoveStatus("지도 좌표를 계산하지 못했습니다");
+      return;
+    }
+    const width = Math.abs(b.x - a.x);
+    const height = Math.abs(b.y - a.y);
+    if (width < 0.3 || height < 0.3) {
+      setMoveStatus("구역을 더 크게 드래그하세요");
+      return;
+    }
+    setGoalBusy(true);
+    const zoneName = zoneKind === "region" ? "위치 제한 구역" : "한계 구역";
+    try {
+      const before = await fetchMoveUi();
+      const previousDetail = before?.robotDetail || "";
+      setMoveStatus(`${zoneName}을 주행 젯슨에 보내는 중`);
+      await saveTaughtZone({
+        kind: zoneKind,
+        x: (a.x + b.x) / 2,
+        y: (a.y + b.y) / 2,
+        yaw: 0,
+        width,
+        height,
+      });
+      let note = `${zoneName}을 주행 젯슨에 보냈습니다`;
+      for (let attempt = 0; attempt < 12; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 400));
+        const state = await fetchMoveUi();
+        const detail = state?.robotDetail || "";
+        if (!detail || detail === previousDetail) continue;
+        if (detail.includes("저장") || detail.includes("구간") || detail.includes("포함") || detail.includes("목표")) {
+          note = detail;
+          break;
+        }
+      }
+      setMoveStatus(note);
+      setZoneKind(null);
+    } catch (error) {
+      setMoveStatus(error?.message || "구역 저장 실패");
+    } finally {
+      setGoalBusy(false);
+    }
+  }, [goalBusy, mapMeta, zoneBoxes, zoneKind]);
+
+  const onZoneButton = useCallback(
+    (kind) => {
+      if (zoneKind === kind) {
+        if (zoneBoxes[kind]) void commitZone();
+        else setMoveStatus("지도를 드래그해서 구역을 먼저 그리세요");
+        return;
+      }
+      setZoneKind(kind);
+      setMoveStatus(
+        kind === "region"
+          ? "지도를 드래그해서 위치 제한 구역을 그리세요"
+          : "지도를 드래그해서 한계 구역을 그리세요. 한계는 목표를 포함해야 합니다"
+      );
+    },
+    [commitZone, zoneBoxes, zoneKind]
+  );
+
+  const zoneButtonLabel = (kind) => {
+    if (zoneKind === kind && zoneBoxes[kind]) {
+      return kind === "region" ? "위치 제한 저장" : "한계 구역 저장";
+    }
+    return kind === "region" ? "위치 제한 구역" : "한계 구역";
+  };
+
+  const locatingNow = ["VERIFYING", "SEARCHING", "LOCAL_RECHECK"].includes(localizationState);
+  const poseBusy = posePending || locatingNow;
+  const poseDone =
+    !poseEstimating &&
+    !poseBusy &&
+    (localizationState === "READY" || locStatus === "localized");
+  const poseLabel = poseEstimating
+    ? "위치 추정 저장"
+    : poseBusy
+      ? "위치 추정 중"
+      : poseDone
+        ? "위치 추정 완료"
+        : "위치 추정 하기";
+  const goalLabel =
+    goalStep === "launching"
+      ? "전환 중…"
+      : goalStep === "save"
+        ? "목표 위치 저장"
+        : goalStep === "zones"
+          ? "목표 저장됨"
+          : "목표 위치 설정";
+  const notLocalized = locStatus === "not_localized" && !poseDone;
+  const notReady = missionReady === false;
+  const goBlocked = notLocalized || notReady || manualControl;
+  const modeHint = zoneKind
+    ? zoneKind === "region"
+      ? "지도를 드래그해서 위치 제한 구역을 그린 뒤 저장하세요"
+      : "지도를 드래그해서 한계 구역을 그린 뒤 저장하세요. 한계는 목표를 포함해야 합니다"
+    : poseEstimating
     ? dropPin
-      ? "완료를 누르면 이 위치와 방향으로 추정합니다"
+      ? "위치 추정 저장을 누르면 이 화살표로 추정을 시작합니다"
       : "지도를 누른 채 드래그하면 방향 화살표가 생깁니다"
+    : manualControl
+      ? "조이스틱 수동 조작 중입니다"
     : notLocalized
       ? "위치 추정이 필요합니다. 위치 추정만 할 수 있습니다"
+      : notReady
+        ? "센서 준비가 끝나지 않았습니다"
+      : missionPhase === "setup"
+        ? "설정 모드입니다. 목표, 파란 한계, 주황 정찰 구간을 저장할 수 있습니다"
       : {
-          select: "지도를 눌러 이동 위치를 지정하거나, 집을 선택하세요",
+          select: "집을 선택하세요",
           move: "집을 드래그해 위치 수정",
         }[mode];
 
-  const placeLabel = notLocalized
-    ? "위치 추정 필요"
-    : liveRobotMap?.live
-      ? `${gdmPose.x_m?.toFixed?.(1) ?? "—"} m`
-      : "위치 없음";
+  const placeLabel = manualControl
+    ? "수동"
+    : notLocalized
+      ? "위치 추정 필요"
+      : notReady
+        ? "준비 안 됨"
+        : liveRobotMap?.live
+          ? `${gdmPose.x_m?.toFixed?.(1) ?? "—"} m`
+          : "위치 없음";
   const showMoveNote = Boolean(moveStatus && moveStatus !== "대기" && !poseEstimating);
-  const showModeHint = poseEstimating || notLocalized;
+  const liveNote = showMoveNote ? moveStatus : lastEvent || "";
+  const showModeHint =
+    poseEstimating ||
+    Boolean(zoneKind) ||
+    notLocalized ||
+    notReady ||
+    manualControl ||
+    missionPhase === "setup";
 
   const selectedScreen = selectedWard
     ? mapPercentToContainer(selectedWard.x, selectedWard.y, mapLayout)
@@ -862,6 +1313,22 @@ function MovePage({
   const dropPinScreen = dropPin
     ? mapPercentToContainer(dropPin.x, dropPin.y, mapLayout)
     : null;
+  const zoneScreens = ["region", "boundary"]
+    .map((kind) => {
+      const box = zoneBoxes[kind];
+      if (!box || !mapLayout) return null;
+      const a = mapPercentToContainer(box.x1, box.y1, mapLayout);
+      const b = mapPercentToContainer(box.x2, box.y2, mapLayout);
+      if (!a || !b) return null;
+      return {
+        kind,
+        left: Math.min(a.x, b.x),
+        top: Math.min(a.y, b.y),
+        width: Math.abs(b.x - a.x),
+        height: Math.abs(b.y - a.y),
+      };
+    })
+    .filter(Boolean);
   const navGoalScreen = navGoal
     ? mapPercentToContainer(navGoal.x, navGoal.y, mapLayout)
     : null;
@@ -870,9 +1337,10 @@ function MovePage({
     : null;
   const hasDestination = Boolean(poseEstimating || dropPin || selectedWard);
   const scentMission = Boolean(selectedWard && !dropPin && !poseEstimating);
+  const showPatrolResume = Boolean(isNavigating);
+  const showGoButton = showPatrolResume || scentMission;
   const goBusyLabel = isMoving ? "전송 중…" : null;
-  const goLabel = goBusyLabel ?? (scentMission ? "발향청정" : "위치 이동");
-  const GoIcon = scentMission ? Wind : Navigation;
+  const goLabel = goBusyLabel ?? "발향청정";
   const scentSpraying = fragranceOn || fragranceDiffusing || sharedSpraying;
 
   const handleStopFragrance = () => {
@@ -888,13 +1356,16 @@ function MovePage({
             64,
             Math.min(180, Number(dropPin.dragPx) || 72)
           ),
-          deg: yawToCssDeg(dropPin.yaw ?? 0),
+          deg: displayYawCss(dropPin.yaw ?? 0, mapLayout?.rotation),
         }
       : null;
 
   return (
     <section className="move-page">
-      <article className={`slam-stage${mapExpanded ? " is-expanded" : ""}`}>
+      <article
+        ref={stageRef}
+        className={`slam-stage${stageFixed ? " is-expanded" : ""}`}
+      >
         <div
           ref={mapRef}
           className={`slam-map ${
@@ -904,6 +1375,12 @@ function MovePage({
                 ? "relocating"
                 : "posing"
           }${poseDragging ? " dragging-pose" : ""}`}
+          style={{
+            "--map-rotation": `${mapLayout?.rotation ?? mapRotation}deg`,
+            "--map-view-scale": mapLayout?.viewScale ?? mapZoom / 100,
+            "--map-pan-x": `${mapLayout?.panX ?? 0}px`,
+            "--map-pan-y": `${mapLayout?.panY ?? 0}px`,
+          }}
           onPointerDown={handleMapPointer}
           role="application"
           aria-label="GDM SLAM 지도"
@@ -911,11 +1388,14 @@ function MovePage({
           <div className="slam-map-surface" aria-hidden="true">
             <div className="slam-map-base" />
             <div className="slam-map-grid" />
-            {!mapFailed && (
+            {!mapFailed && robotMap.status !== "loading" && (
               <img
                 ref={imgRef}
                 className={`slam-map-image ${mapReady ? "ready" : ""}`}
-                src={`${GDM_FLOORPLAN_URL}?t=${gdmStatus.map ?? "map"}`}
+                src={
+                  robotMap.imageUrl ??
+                  `${GDM_FLOORPLAN_URL}?t=${gdmStatus.map ?? "map"}`
+                }
                 alt=""
                 draggable={false}
                 onLoad={() => {
@@ -935,8 +1415,10 @@ function MovePage({
             >
               <p className="slam-fallback-label">
                 {mapFailed
-                  ? "GDM floor_plan PNG를 찾을 수 없습니다 (gdm-bridge 확인)"
-                  : "GDM 지도 불러오는 중…"}
+                  ? robotMap.imageUrl
+                    ? "주행 맵을 불러오지 못했습니다"
+                    : "GDM floor_plan PNG를 찾을 수 없습니다 (gdm-bridge 확인)"
+                  : "지도 불러오는 중…"}
               </p>
             </div>
           </div>
@@ -1069,6 +1551,8 @@ function MovePage({
             </svg>
           )}
 
+          <MapZoneOverlay mapLayout={mapLayout} mapMeta={mapMeta} />
+
           {isNavigating && pathGoalScreen && robotScreen ? (
             <svg className="slam-path-svg" aria-hidden="true">
               <line
@@ -1080,6 +1564,19 @@ function MovePage({
               />
             </svg>
           ) : null}
+
+          {zoneScreens.map((zone) => (
+            <div
+              key={zone.kind}
+              className={`slam-zone-draft ${zone.kind}`}
+              style={{
+                left: `${zone.left}%`,
+                top: `${zone.top}%`,
+                width: `${zone.width}%`,
+                height: `${zone.height}%`,
+              }}
+            />
+          ))}
 
           {poseArrow ? (
             <svg className="slam-pose-svg" aria-hidden="true">
@@ -1138,7 +1635,7 @@ function MovePage({
               <span
                 className="slam-robot-heading"
                 style={{
-                  transform: `rotate(${yawToCssDeg(robotMapPos?.yaw ?? 0)}deg)`,
+                  transform: `rotate(${displayYawCss(robotMapPos?.yaw ?? 0, mapLayout?.rotation)}deg)`,
                 }}
                 aria-hidden="true"
               >
@@ -1343,7 +1840,7 @@ function MovePage({
                   disabled={isMoving || isStopping || poseDragging || !dropPin}
                 >
                   <Check size={18} />
-                  {isMoving ? "전송 중…" : "완료"}
+                  {isMoving ? "전송 중…" : "위치 추정 저장"}
                 </button>
                 {scentSpraying ? (
                   <button
@@ -1407,45 +1904,62 @@ function MovePage({
                     )}
                   </>
                 ) : (
-                  "지도를 눌러 목적지를 지정하거나, 집을 선택하세요"
+                  "집을 선택하세요"
                 )}
               </p>
 
-              <div className={`slam-selected-actions dual-pose${scentSpraying ? " with-stop" : ""}`}>
+              <div className={`slam-selected-actions dual-pose with-goal${scentSpraying ? " with-stop" : ""}`}>
                 <button
                   type="button"
-                  className={`slam-pose-btn${notLocalized ? " needed" : ""}`}
-                  onClick={beginPoseEstimate}
-                  disabled={isMoving || isStopping || isNavigating}
+                  className={`slam-pose-btn${poseDone ? " done" : ""}${poseBusy ? " busy" : ""}${!poseDone && !poseBusy ? " needed" : ""}`}
+                  onClick={() => {
+                    if (poseBusy) return;
+                    beginPoseEstimate();
+                  }}
+                  disabled={isMoving || isStopping || poseBusy}
                 >
                   <LocateFixed size={18} />
-                  위치 추정
+                  {poseLabel}
                 </button>
                 <button
                   type="button"
-                  className={`slam-go-btn ${isNavigating ? "is-stop" : ""}${isMoving && !isNavigating ? " busy" : ""}${!isNavigating && scentMission ? " scent-mission" : ""}${isStopping ? " busy" : ""}`}
-                  onClick={isNavigating || isMoving ? stopMove : startMove}
+                  className={`slam-goal-btn${goalStep === "zones" ? " done" : ""}${goalBusy ? " busy" : ""}`}
+                  onClick={() => {
+                    if (goalStep === "save") {
+                      void saveGoalPose();
+                      return;
+                    }
+                    if (goalStep === "idle") void beginGoalSetup();
+                  }}
+                  disabled={goalBusy || goalStep === "launching" || goalStep === "zones" || poseEstimating}
+                >
+                  <Crosshair size={18} />
+                  {goalBusy && goalStep !== "zones" ? "처리 중…" : goalLabel}
+                </button>
+                {showGoButton ? (
+                <button
+                  type="button"
+                  className={`slam-go-btn ${showPatrolResume ? "is-stop" : ""}${isMoving && !showPatrolResume ? " busy" : ""}${!showPatrolResume && scentMission ? " scent-mission" : ""}${isStopping ? " busy" : ""}`}
+                  onClick={showPatrolResume || isMoving ? stopMove : startMove}
                   disabled={
                     isStopping ||
                     poseDragging ||
-                    (!(isNavigating || isMoving) &&
-                      (notLocalized ||
-                        (!dropPin && !selectedWard) ||
-                        (!dropPin && selectedPinDirty)))
+                    (!(showPatrolResume || isMoving) && goBlocked)
                   }
                 >
-                  {isNavigating ? (
+                  {showPatrolResume ? (
                     <>
                       <Square size={18} strokeWidth={2.4} fill="currentColor" />
-                      {isStopping ? "정지 중…" : "정지"}
+                      {isStopping ? "재개 중…" : "정찰 재개"}
                     </>
                   ) : (
                     <>
-                      <GoIcon size={18} />
+                      <Wind size={18} />
                       {isMoving ? "전송 중…" : goLabel}
                     </>
                   )}
                 </button>
+                ) : null}
                 {scentSpraying ? (
                   <button
                     type="button"
@@ -1471,12 +1985,18 @@ function MovePage({
               {placeLabel !== "위치 없음" ? (
                 <div
                   className={`slam-live-chip${notLocalized || !robotScreen ? " warn" : ""}`}
-                  title={gdmStatus.map ? `GDM · ${gdmStatus.map}` : "SLAM 지도"}
+                  title={
+                    robotMap.map?.name
+                      ? `주행 맵 · ${robotMap.map.name}`
+                      : gdmStatus.map
+                        ? `GDM · ${gdmStatus.map}`
+                        : "SLAM 지도"
+                  }
                 >
                   <span className="slam-live-dot" aria-hidden="true" />
                   <span>{placeLabel}</span>
-                  {showMoveNote ? (
-                    <span className="slam-live-note">{moveStatus}</span>
+                  {liveNote ? (
+                    <span className="slam-live-note">{liveNote}</span>
                   ) : null}
                 </div>
               ) : null}
@@ -1484,12 +2004,56 @@ function MovePage({
                 type="button"
                 className="slam-mode-btn"
                 onClick={() => importGdmRooms()}
-                disabled={gdmImporting}
-                title="GDM 방 윤곽을 갱신합니다 (저장한 핀 위치는 유지)"
+                disabled={gdmImporting || Boolean(robotMap.meta)}
+                title={
+                  robotMap.meta
+                    ? "주행 맵에는 GDM 방 윤곽이 없습니다"
+                    : "GDM 방 윤곽을 갱신합니다 (저장한 핀 위치는 유지)"
+                }
               >
                 <RefreshCw size={16} className={gdmImporting ? "spin" : ""} />
                 GDM 방 불러오기
               </button>
+              {missionPhase === "setup" ? (
+                <div className="slam-mode-group" role="group" aria-label="설정 저장">
+                  <button
+                    type="button"
+                    className="slam-mode-btn"
+                    onClick={() => {
+                      setMoveStatus("목표 저장");
+                      void publishImpactCommand("save_goal").catch((error) => {
+                        setMoveStatus(error?.message || "목표 저장 실패");
+                      });
+                    }}
+                  >
+                    목표 저장
+                  </button>
+                  <button
+                    type="button"
+                    className="slam-mode-btn"
+                    onClick={() => {
+                      setMoveStatus("한계 저장");
+                      void publishImpactCommand("save_boundary").catch((error) => {
+                        setMoveStatus(error?.message || "한계 저장 실패");
+                      });
+                    }}
+                  >
+                    한계 저장
+                  </button>
+                  <button
+                    type="button"
+                    className="slam-mode-btn"
+                    onClick={() => {
+                      setMoveStatus("정찰 구간 저장");
+                      void publishImpactCommand("save_region").catch((error) => {
+                        setMoveStatus(error?.message || "정찰 구간 저장 실패");
+                      });
+                    }}
+                  >
+                    정찰 구간 저장
+                  </button>
+                </div>
+              ) : null}
               <div className="slam-mode-group" role="tablist" aria-label="지도 모드">
                 <button
                   type="button"
@@ -1509,20 +2073,41 @@ function MovePage({
                   <Move size={16} />
                   위치
                 </button>
+                <button
+                  type="button"
+                  className={`slam-mode-btn zone-region${zoneKind === "region" ? " active" : ""}`}
+                  onClick={() => onZoneButton("region")}
+                  disabled={goalBusy || poseEstimating}
+                >
+                  {zoneButtonLabel("region")}
+                </button>
+                <button
+                  type="button"
+                  className={`slam-mode-btn zone-boundary${zoneKind === "boundary" ? " active" : ""}`}
+                  onClick={() => onZoneButton("boundary")}
+                  disabled={goalBusy || poseEstimating}
+                >
+                  {zoneButtonLabel("boundary")}
+                </button>
               </div>
               <button
                 type="button"
                 className="slam-fullscreen-btn"
                 aria-pressed={mapExpanded}
                 aria-label={mapExpanded ? "지도 축소" : "지도 전체화면"}
-                onClick={() => setMapExpanded((open) => !open)}
+                onClick={toggleMapExpanded}
               >
-                {mapExpanded ? (
-                  <Minimize2 size={18} strokeWidth={2.4} />
-                ) : (
-                  <Maximize2 size={18} strokeWidth={2.4} />
-                )}
-                <span>{mapExpanded ? "축소" : "전체화면"}</span>
+                <span
+                  key={mapExpanded ? "collapse" : "expand"}
+                  className={`slam-fullscreen-swap${morphSnap ? " is-live" : ""}`}
+                >
+                  {mapExpanded ? (
+                    <Minimize2 size={18} strokeWidth={2.4} />
+                  ) : (
+                    <Maximize2 size={18} strokeWidth={2.4} />
+                  )}
+                  <span>{mapExpanded ? "축소" : "전체화면"}</span>
+                </span>
               </button>
             </div>
             {!robotScreen ? (
