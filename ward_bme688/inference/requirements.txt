@@ -1,0 +1,7 @@
+# WARD 파이썬 도구 (tools/). 설치: pip install -r requirements.txt
+# + gcc 필요 (판정 엔진 tools/ward_engine.py 가 firmware/ward/ward_infer.h 를 빌드) — Windows: MinGW-w64 64비트, Jetson: 기본 gcc
+numpy>=1.24
+pandas>=2.0
+matplotlib>=3.7          # live_view·label_tool
+pyserial>=3.5            # capture_serial (USB)
+paho-mqtt>=1.6,<2        # mqtt_capture·ward_view·push_model — 2.x 는 콜백 형식이 달라 아직 안 씀
