@@ -1948,3 +1948,14 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* 와드 판정 세기에 따라 오라 크기 (11/15) */
+.slam-ward-aura {
+  transform: scale(var(--aura-scale, 1));
+}
+
+.slam-room-poly.scent-odor {
+  stroke-dasharray: none;
+  stroke-width: 2.25;
+  fill: none;
+}
