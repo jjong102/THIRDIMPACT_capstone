@@ -49,6 +49,18 @@ STATE_KO = {"WARMUP": "예열 중", "CLEAN": "깨끗함", "SCENT": "향기", "MA
             "UNKNOWN": "모르는냄새", "HOLD": "보류"}
 
 
+BATT_LOW_V = 3.6   # 이 아래면 경고 (10/26~27 방전 리셋은 대략 3.4~3.5V 부근부터로 추정)
+
+
+def batt_text(d: dict) -> str:
+    """와드 배터리 (11/15 펌웨어부터). 없거나 못 읽으면 빈 글자. % 는 전압으로 어림(±10~15%)."""
+    v, pct = d.get("batt_v"), d.get("batt_pct")
+    if v is None or v < 0:
+        return ""
+    warn = "  ⚠ 충전 필요" if v < BATT_LOW_V else ""
+    return f"  · 배터리 {v:.2f}V ({pct}%){warn}"
+
+
 def main():
     ap = argparse.ArgumentParser(description="와드 온디바이스 판정 MQTT 보기")
     ap.add_argument("--device", default="ward-01")
@@ -111,6 +123,7 @@ def main():
                 line += "  ◀ 출동"
             elif d.get("event") == "OFF":
                 line += "  ◀ 끔"
+        line += batt_text(d)
         print(line, flush=True)
 
     c.on_connect, c.on_message = on_connect, on_message

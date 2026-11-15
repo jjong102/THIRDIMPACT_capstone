@@ -43,5 +43,12 @@
 //   그래도 리셋되면 WIFI_POWER_5dBm / 핫스팟을 더 가까이. 연결이 자주 끊기면 WIFI_POWER_11dBm.
 #define WIFI_TX_POWER WIFI_POWER_8_5dBm
 
+// (11/15 실험) 센서 시작 시점 어긋내기. 0 = 8개 동시 시작(기본, 지금까지 모든 데이터).
+//   1225 이면 센서 i 를 i×1.225초 늦게 시작 → 사이클 끝이 1.2초 간격으로 번갈아 나온다.
+//   히터 단계·사이클(9.8초)은 같다. 실험 뒤에는 0 으로 되돌린다.
+#ifndef WARD_STAGGER_MS
+#define WARD_STAGGER_MS 0
+#endif
+
 // HiveMQ 에서 같은 client id 로 두 대가 붙으면 서로 끊어 낸다 → device_id 로 구분.
 #define MQTT_CLIENT_ID_STR DEVICE_ID "-raw"

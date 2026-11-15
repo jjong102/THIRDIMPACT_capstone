@@ -40,16 +40,16 @@ WRAPPER = r"""
 #define EX __attribute__((visibility("default")))
 #endif
 EX void *we_new(int on_cycles, int off_cycles, float min_on, float warmup, float flat, float track,
-                float rebase, int rebase_weak, float spray_lock, float stuck_rebase) {
+                float rebase, int rebase_weak, float spray_lock, float stuck_rebase, float fast_mag) {
   wi_state_t *S = (wi_state_t *)calloc(1, sizeof(wi_state_t));
-  wi_params_t P = {on_cycles, off_cycles, min_on, warmup, flat, track, rebase, rebase_weak, spray_lock, stuck_rebase};
+  wi_params_t P = {on_cycles, off_cycles, min_on, warmup, flat, track, rebase, rebase_weak, spray_lock, stuck_rebase, fast_mag};
   if (S) wi_init(S, P);
   return S;
 }
 EX void  we_defaults(float *f, int *i) {            /* wi_default_params() — PC 도구 기본값의 유일한 출처 */
   wi_params_t P = wi_default_params();
   i[0] = P.on_cycles; i[1] = P.off_cycles; i[2] = P.rebase_weak;
-  f[0] = P.min_on; f[1] = P.warmup; f[2] = P.flat; f[3] = P.track; f[4] = P.rebase; f[5] = P.spray_lock; f[6] = P.stuck_rebase;
+  f[0] = P.min_on; f[1] = P.warmup; f[2] = P.flat; f[3] = P.track; f[4] = P.rebase; f[5] = P.spray_lock; f[6] = P.stuck_rebase; f[7] = P.fast_mag;
 }
 EX void  we_free(void *S) { free(S); }
 EX int   we_set_model(void *S_, const char *txt, int len, char *err, int errlen) {
@@ -120,7 +120,7 @@ def _load():
     L = ctypes.CDLL(str(_build()))
     vp, f, i, d, cp = ctypes.c_void_p, ctypes.c_float, ctypes.c_int, ctypes.c_double, ctypes.c_char_p
     L.we_new.restype = vp
-    L.we_new.argtypes = [i, i, f, f, f, f, f, i, f, f]
+    L.we_new.argtypes = [i, i, f, f, f, f, f, i, f, f, f]
     L.we_free.argtypes = [vp]
     L.we_defaults.argtypes = [ctypes.POINTER(f), ctypes.POINTER(i)]
     L.we_set_model.restype = i
@@ -150,11 +150,12 @@ def _load():
 def defaults():
     """판정 파라미터 기본값 — ward_infer.h 의 wi_default_params() 에서 읽는다 (파이썬에 숫자를 따로 적지 않음)."""
     L = _load()
-    fv, iv = (ctypes.c_float * 7)(), (ctypes.c_int * 3)()
+    fv, iv = (ctypes.c_float * 8)(), (ctypes.c_int * 3)()
     L.we_defaults(fv, iv)
     return dict(on_cycles=iv[0], off_cycles=iv[1], rebase_weak=bool(iv[2]),
                 min_on=round(fv[0], 4), warmup=round(fv[1], 4), flat=round(fv[2], 4), track=round(fv[3], 4),
-                rebase=round(fv[4], 4), spray_lock=round(fv[5], 4), stuck_rebase=round(fv[6], 4))
+                rebase=round(fv[4], 4), spray_lock=round(fv[5], 4), stuck_rebase=round(fv[6], 4),
+                fast_mag=round(fv[7], 4))
 
 
 def add_param_args(ap):
@@ -173,12 +174,14 @@ def add_param_args(ap):
                     help="청정기 켜진 채 켬 쪽이 이 시간(초, 라운드 수로 셈) 평평하면 기준선 다시 (0 끔)")
     ap.add_argument("--spray-lock", type=float, default=d["spray_lock"],
                     help="스스로 향을 뿌린 뒤 이 시간(초) 동안 Unknown 으로는 켜지 않음 (0 끔)")
+    ap.add_argument("--fast-mag", type=float, default=d["fast_mag"],
+                    help="켬 쪽 만장일치 + 변화량 중앙값이 이 값 이상이면 1라운드에 출동 (0 끔)")
 
 
 def engine_kwargs(args):
     return dict(on_cycles=args.on_cycles, off_cycles=args.off_cycles, min_on=args.min_on, warmup=args.warmup,
                 flat=args.flat, track=args.track, rebase=args.rebase, rebase_weak=args.rebase_weak,
-                spray_lock=args.spray_lock, stuck_rebase=args.stuck_rebase)
+                spray_lock=args.spray_lock, stuck_rebase=args.stuck_rebase, fast_mag=args.fast_mag)
 
 
 def parse_row(line):
@@ -202,7 +205,8 @@ class WardEngine:
         self.L = _load()
         p = {**defaults(), **params}
         self.S = self.L.we_new(p["on_cycles"], p["off_cycles"], p["min_on"], p["warmup"], p["flat"], p["track"],
-                               p["rebase"], int(bool(p["rebase_weak"])), p["spray_lock"], p["stuck_rebase"])
+                               p["rebase"], int(bool(p["rebase_weak"])), p["spray_lock"], p["stuck_rebase"],
+                               p["fast_mag"])
         if not self.S:
             raise MemoryError("판정 상태를 만들지 못했습니다")
         self.set_model(model, on_labels)
