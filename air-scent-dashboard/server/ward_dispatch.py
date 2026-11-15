@@ -88,7 +88,8 @@ class WardDispatch:
                 "ward_id": ward, "state": d.get("state"), "label": d.get("label"),
                 "label_note": d.get("label_note"), "strength_pct": d.get("strength_pct"),
                 "purifier": d.get("purifier"), "event": d.get("event"), "spraying": d.get("spraying"),
-                "uptime_s": d.get("uptime_s"), "rx_time": time.time()}})
+                "uptime_s": d.get("uptime_s"), "batt_v": d.get("batt_v"), "batt_pct": d.get("batt_pct"),
+            "rx_time": time.time()}})
         except Exception:  # noqa: BLE001
             pass
         if d.get("event") != "ON":

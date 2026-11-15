@@ -865,11 +865,11 @@ function MorePage({
             ) : null}
 
             <div className="more-demo-log" aria-label="MQTT 수신 로그">
-              <div className="more-demo-log-head">수신 로그 · sensor/air_quality</div>
+              <div className="more-demo-log-head">수신 로그 · 와드 판정 (diffuser/ward-01/inference_ward)</div>
               <div className="more-demo-log-body" ref={logBodyRef}>
                 {mqttLogs.length === 0 ? (
                   <p className="more-demo-log-line kind-sys">
-                    <span>센서 수신 대기 중…</span>
+                    <span>와드 판정 수신 대기 중… (약 10초마다)</span>
                   </p>
                 ) : (
                   mqttLogs.map((line) => (
