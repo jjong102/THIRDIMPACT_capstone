@@ -1,4 +1,4 @@
 # 같은 사람이 여러 이름·이메일로 커밋한 것을 한 이름으로 묶는다 (git shortlog -sn, git log 에 적용)
-Woobin Youn <ywb5877@gmail.com> woobin <ywb5877@gmail.com>
-Woobin Youn <ywb5877@gmail.com> <155806829+woobin201@users.noreply.github.com>
+woobin201 <ywb5877@gmail.com> woobin <ywb5877@gmail.com>
+woobin201 <ywb5877@gmail.com> <155806829+woobin201@users.noreply.github.com>
 jjong102 <leewon011002@gmail.com> jjon102 <leewon011002@gmail.com>
