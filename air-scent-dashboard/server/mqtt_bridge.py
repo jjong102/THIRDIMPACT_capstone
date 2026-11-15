@@ -436,6 +436,15 @@ def on_disconnect(client, userdata, rc) -> None:
         _log_retry(tag, f"[mqtt-bridge] {mqtt_error}")
 
 
+def _ward_batt_text(d: dict) -> str:
+    """와드 배터리 (11/15 펌웨어부터). 전압으로 어림한 % — 3.6V 아래면 충전 경고."""
+    v = d.get("batt_v")
+    if not isinstance(v, (int, float)) or v < 0:
+        return ""
+    warn = " ⚠ 충전 필요" if v < 3.6 else ""
+    return f" · 배터리 {v:.2f}V ({d.get('batt_pct')}%){warn}"
+
+
 def _ward_log_text(topic: str, payload: str) -> str:
     """와드 판정 JSON → 한 줄. 예: ward-01 · 악취(식초) · 세기 40% · 표 8/8 · 청정기 ON ◀ 출동"""
     try:
@@ -447,7 +456,7 @@ def _ward_log_text(topic: str, payload: str) -> str:
     state = str(d.get("state") or "")
     head = WARD_STATE_KO.get(state, state)
     if state == "WARMUP":
-        return f"{ward} · {head} (켜진 지 {d.get('uptime_s')}초)"
+        return f"{ward} · {head} (켜진 지 {d.get('uptime_s')}초)" + _ward_batt_text(d)
     name = WARD_LABEL_KO.get(str(d.get("label") or ""), "")
     if name and state == "SCENT":
         head += f"({name} 추정)"
@@ -469,7 +478,7 @@ def _ward_log_text(topic: str, payload: str) -> str:
         text += " ◀ 출동"
     elif d.get("event") == "OFF":
         text += " ◀ 회복"
-    return text
+    return text + _ward_batt_text(d)
 
 
 def on_message(client, userdata, msg) -> None:
