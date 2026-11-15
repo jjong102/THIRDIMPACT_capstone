@@ -59,6 +59,37 @@
 #define PAYLOAD_MAX 3000        /* 메시지 1개 최대 바이트 */
 #define MQTT_BUF    3400        /* PubSubClient 버퍼 (기본 256 이라 반드시 키워야 함) */
 
+/* ---------- 배터리 전압 (11/15) ----------
+ * HUZZAH32 Feather 는 배터리 전압을 반으로 나눠 A13(GPIO35, ADC1)에 연결해 두었다 → 읽은 값 × 2.
+ * 히터 8개가 켜질 때 순간적으로 떨어지므로 2초마다 16번 평균 + 느린 평균(EMA)으로 매끄럽게.
+ * USB 가 꽂혀 있으면 충전 전압(≈4.2V)이 읽혀 100% 근처로 보인다. % 는 리튬 방전 곡선으로 어림(±10~15%). */
+#define BATT_PIN      35
+#define BATT_EVERY_MS 2000
+static float    g_batt_v = NAN;
+static uint32_t g_lastBatt = 0;
+
+static void batt_sample()
+{
+  if (g_lastBatt && millis() - g_lastBatt < BATT_EVERY_MS) return;
+  g_lastBatt = millis();
+  uint32_t mv = 0;
+  for (int i = 0; i < 16; i++) mv += analogReadMilliVolts(BATT_PIN);
+  float v = (mv / 16.0f) * 2.0f / 1000.0f;
+  if (v < 2.5f || v > 4.6f) return;                  /* 배터리 없음·잘못 읽음 */
+  g_batt_v = isnan(g_batt_v) ? v : g_batt_v * 0.8f + v * 0.2f;
+}
+
+static int batt_pct(float v)
+{
+  static const float tv[] = {3.30f, 3.60f, 3.69f, 3.73f, 3.77f, 3.80f, 3.84f, 3.87f, 3.95f, 4.02f, 4.11f, 4.20f};
+  static const int   tp[] = {   0,     5,    10,    20,    30,    40,    50,    60,    70,    80,    90,   100};
+  if (isnan(v)) return -1;
+  if (v <= tv[0]) return 0;
+  for (int i = 1; i < 12; i++)
+    if (v <= tv[i]) return (int)(tp[i - 1] + (tp[i] - tp[i - 1]) * (v - tv[i - 1]) / (tv[i] - tv[i - 1]) + 0.5f);
+  return 100;
+}
+
 const char    *WIFI_SSID      = SECRET_WIFI_SSID;
 const char    *WIFI_PASS      = SECRET_WIFI_PASS;
 const char    *MQTT_BROKER    = SECRET_MQTT_BROKER;
@@ -101,7 +132,7 @@ static void enqueue(const char *s)
 
 #if WARD_INFER
 /* ---------- 온디바이스 판정 ---------- */
-#define INFER_MSG_MAX 352
+#define INFER_MSG_MAX 400
 struct InferMsg { char s[INFER_MSG_MAX]; };
 QueueHandle_t g_iq = NULL;             /* 판정 JSON → 네트워킹 태스크. 최근 것만 의미 있어 짧게 */
 static wi_state_t g_wi;
@@ -272,14 +303,16 @@ static void infer_publish_decision(const wi_decision_t &D)
            "{\"device_id\":\"%s\",\"src\":\"ward\",\"model\":\"%s\",\"uptime_s\":%lu,"
            "\"state\":\"%s\",\"label\":\"%s\",\"label_note\":\"%s\",\"mag\":%.3f,\"strength_pct\":%d,"
            "\"votes\":%d,\"n\":%d,\"purifier\":\"%s\",\"event\":\"%s\","
-           "\"alert\":{\"malodor\":%s},\"spraying\":\"%s\",\"baseline_age_s\":%.0f}",
+           "\"alert\":{\"malodor\":%s},\"spraying\":\"%s\",\"baseline_age_s\":%.0f,"
+           "\"batt_v\":%.2f,\"batt_pct\":%d}",
            DEVICE_ID, g_wi.M.id, (unsigned long)(millis() / 1000),
            st, wi_label_name(&g_wi, D.top), scent ? "추정" : "", isfinite(D.mag) ? D.mag : -1.0f,
            wi_strength_pct(&g_wi.M, D.mag),
            D.k, D.n, D.purifier ? "on" : "off",
            D.event == 1 ? "ON" : (D.event == 2 ? "OFF" : ""),
            (D.purifier && (D.top == WI_UNKNOWN || (D.top >= 0 && g_wi.M.c[D.top].on))) ? "true" : "false",
-           spraying, g_wi.sec_now - g_wi.base_sec);
+           spraying, g_wi.sec_now - g_wi.base_sec,
+           isnan(g_batt_v) ? -1.0f : g_batt_v, batt_pct(g_batt_v));
   infer_push(js);
   /* 시리얼에도 한 줄 ('#' 로 시작해서 capture_serial.py 의 CSV 에는 안 섞임) */
   Serial.print(F("# I ")); Serial.print(D.sec, 1); Serial.print(' ');
@@ -296,10 +329,12 @@ static void infer_warmup_tick()
 {
   if (g_wi.has_base || millis() - g_lastWarmMsg < 10000) return;
   g_lastWarmMsg = millis();
-  char js[160];
+  char js[200];
   snprintf(js, sizeof(js),
-           "{\"device_id\":\"%s\",\"src\":\"ward\",\"model\":\"%s\",\"uptime_s\":%lu,\"state\":\"WARMUP\"}",
-           DEVICE_ID, g_wi.M.id, (unsigned long)(millis() / 1000));
+           "{\"device_id\":\"%s\",\"src\":\"ward\",\"model\":\"%s\",\"uptime_s\":%lu,\"state\":\"WARMUP\","
+           "\"batt_v\":%.2f,\"batt_pct\":%d}",
+           DEVICE_ID, g_wi.M.id, (unsigned long)(millis() / 1000),
+           isnan(g_batt_v) ? -1.0f : g_batt_v, batt_pct(g_batt_v));
   infer_push(js);
 }
 #endif
@@ -391,6 +426,8 @@ void setup(void)
 {
   Serial.begin(BAUD);
   pinMode(LED_PIN, OUTPUT);
+  analogSetPinAttenuation(BATT_PIN, ADC_11db);       /* 0~약 3.1V 측정 (배터리 ÷2 = 최대 2.1V) */
+  batt_sample();
   commMuxBegin(Wire, SPI);
   delay(200);
 
@@ -412,10 +449,21 @@ void setup(void)
     uint16_t sharedHeatrDur =
         MEAS_DUR - (bme[i].getMeasDur(BME68X_PARALLEL_MODE) / INT64_C(1000));
     bme[i].setHeaterProf(tempProf, mulProf, sharedHeatrDur, 10);
+#if WARD_STAGGER_MS == 0
     bme[i].setOpMode(BME68X_PARALLEL_MODE);
+#endif
     sensorOk[i] = true;
     ok++;
   }
+#if WARD_STAGGER_MS > 0
+  /* (11/15 실험) 센서마다 WARD_STAGGER_MS 씩 늦게 시작 — 히터 단계는 같고 시작 시점만 다르다 */
+  for (uint8_t i = 0; i < N_KIT_SENS; i++) {
+    if (!sensorOk[i]) continue;
+    if (i) delay(WARD_STAGGER_MS);
+    bme[i].setOpMode(BME68X_PARALLEL_MODE);
+  }
+  Serial.print(F("# stagger ")); Serial.print(WARD_STAGGER_MS); Serial.println(F(" ms (실험: 센서 시작 시점 어긋냄)"));
+#endif
 
   if (ok == 0) {
     Serial.println(F("# ERROR: no working sensor. check wiring."));
@@ -466,6 +514,7 @@ void loop(void)
     led = !led;
     digitalWrite(LED_PIN, led);
   }
+  batt_sample();
 
   if (millis() - lastMeas < MEAS_DUR) return;
   lastMeas = millis();

@@ -19,5 +19,5 @@ MODEL = ROOT / "model" / "openset_model.json"
 MODEL_HISTORY = ROOT / "model" / "history"
 WARD_FW = ROOT / "firmware" / "ward"
 
-# 라벨링 창의 숫자키 1..8 순서 (docs/학습_계획.md). 다른 라벨은 --labels 로.
+# 라벨링 창의 숫자키 1..8 순서 (docs/수집_가이드.md). 다른 라벨은 --labels 로.
 LABELS = ["Air", "Vinegar", "WetSock", "Sock", "Water", "Peppermint", "Lavender", "Orange"]

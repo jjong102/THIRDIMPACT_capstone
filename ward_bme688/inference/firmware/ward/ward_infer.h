@@ -63,7 +63,7 @@ typedef struct {
 enum { WI_AIR = -1, WI_WEAK = -2, WI_UNKNOWN = -3, WI_NONE = -4 };
 
 typedef struct {                  /* ward_controller.py 기본값과 같음 */
-  int   on_cycles;                /* 3   */
+  int   on_cycles;                /* 2   (11/15: 3 → 2, 반응 중앙 35 → 21초 with fast_mag) */
   int   off_cycles;               /* 12  */
   float min_on;                   /* 180 초 */
   float warmup;                   /* 60  초 */
@@ -73,10 +73,11 @@ typedef struct {                  /* ward_controller.py 기본값과 같음 */
   int   rebase_weak;              /* 0   */
   float spray_lock;               /* 180 초 */
   float stuck_rebase;             /* 60 초 (0 = 끔) — 켜진 채 켬 쪽이 평평하면 기준선 다시 */
+  float fast_mag;                 /* 0.4 (0 = 끔). 켬 쪽이 만장일치(k == n)이고 변화량 중앙값 ≥ 이 값이면 1라운드에 출동 (11/15) */
 } wi_params_t;
 
 static inline wi_params_t wi_default_params(void) {
-  wi_params_t p = {3, 12, 180.0f, 60.0f, 0.05f, 0.02f, 180.0f, 0, 180.0f, 60.0f};
+  wi_params_t p = {2, 12, 180.0f, 60.0f, 0.05f, 0.02f, 180.0f, 0, 180.0f, 60.0f, 0.4f};
   return p;
 }
 
@@ -261,7 +262,9 @@ static inline void wi_decide(wi_state_t *S, float sec) {
   if (want == 1) { S->run_on++; S->run_off = 0; }
   else if (want == 0) { S->run_on = 0; S->run_off++; }
   D.event = 0;
-  if (!S->purifier && S->run_on >= S->P.on_cycles) { S->purifier = 1; S->on_since = sec; D.event = 1; }
+  /* 강하고 만장일치면 바로, 아니면 on_cycles 라운드 연속 확인 */
+  int need_on = (S->P.fast_mag > 0 && want == 1 && n >= 6 && k == n && med >= S->P.fast_mag) ? 1 : S->P.on_cycles;
+  if (!S->purifier && S->run_on >= need_on) { S->purifier = 1; S->on_since = sec; D.event = 1; }
   else if (S->purifier && S->run_off >= S->P.off_cycles && sec - S->on_since >= S->P.min_on) { S->purifier = 0; D.event = 2; }
   /* 기준선 추종: Air 가 6사이클 이상, 변화량이 문턱 절반 아래일 때만 아주 조금 */
   if (S->air_run >= 6 && med <= S->M.tau_air / 2) {

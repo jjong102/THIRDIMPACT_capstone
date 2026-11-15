@@ -14,4 +14,5 @@ __pycache__/
 *.pyc
 
 # 데이터시트 (Bosch 배포물, 재배포 안 함)
-docs/bst-bme688-ds000.pdf
+docs/*.pdf
+training/discarded_*/
