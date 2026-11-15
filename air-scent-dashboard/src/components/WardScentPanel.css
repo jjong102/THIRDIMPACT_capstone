@@ -183,3 +183,50 @@
 .ward-batt.is-low .ward-batt-level {
   background: #ef4444;
 }
+
+/* 접기 (11/15) — 오른쪽 .slam-destination.is-collapsed 의 좌우 대칭 */
+.ward-scent-panel {
+  transition:
+    width 0.28s ease,
+    padding 0.28s ease,
+    border-radius 0.28s ease;
+}
+
+.ward-scent-hide {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  background: rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(6px) saturate(1.25);
+  -webkit-backdrop-filter: blur(6px) saturate(1.25);
+}
+
+.ward-scent-panel.is-collapsed {
+  position: fixed;
+  left: 0;
+  right: auto;
+  z-index: 70;
+  box-sizing: border-box;
+  width: 54px;
+  padding: 14px 6px;
+  border-radius: 0 28px 28px 0;
+  border-left: none;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.ward-scent-panel.is-collapsed > :not(.ward-scent-toggle) {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.ward-scent-toggle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+  background: rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(6px) saturate(1.25);
+  -webkit-backdrop-filter: blur(6px) saturate(1.25);
+}
