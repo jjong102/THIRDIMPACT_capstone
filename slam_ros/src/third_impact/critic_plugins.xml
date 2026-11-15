@@ -1,0 +1,5 @@
+<library path="third_impact_critics">
+  <class name="third_impact::LoggedOscillationCritic" type="third_impact::LoggedOscillationCritic" base_class_type="dwb_core::TrajectoryCritic">
+    <description>Humble oscillation policy with exact reset-reason diagnostics.</description>
+  </class>
+</library>

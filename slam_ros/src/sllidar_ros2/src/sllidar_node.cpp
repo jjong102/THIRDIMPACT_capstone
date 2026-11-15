@@ -372,6 +372,12 @@ public:
                     if (angle_compensate) {
                         //const int angle_compensate_multiple = 1;
                         const int angle_compensate_nodes_count = 360*angle_compensate_multiple;
+                        // Slots are spaced at 1 / multiple degrees. At 720 slots
+                        // the last angle is 359.5, not 359; publish_scan reverses
+                        // these slots and derives angle_increment from this bound.
+                        const float compensated_angle_max = DEG2RAD(
+                            static_cast<double>(angle_compensate_nodes_count - 1) /
+                            angle_compensate_multiple);
                         int angle_compensate_offset = 0;
                         auto angle_compensate_nodes = new sl_lidar_response_measurement_node_hq_t[angle_compensate_nodes_count];
                         memset(angle_compensate_nodes, 0, angle_compensate_nodes_count*sizeof(sl_lidar_response_measurement_node_hq_t));
@@ -393,7 +399,7 @@ public:
     
                         publish_scan(scan_pub, angle_compensate_nodes, angle_compensate_nodes_count,
                                 start_scan_time, scan_duration, inverted,
-                                angle_min, angle_max, max_distance,
+                                angle_min, compensated_angle_max, max_distance,
                                 frame_id);
 
                         if (angle_compensate_nodes) {

@@ -33,16 +33,16 @@
 THIRDIMPACT_capstone/
 ├── slam_ros/                        # ROS 2 워크스페이스 (로봇 · Jetson)
 │   └── src/
-│       ├── all_in_one_package/      # [자체]  통합 런치 + 자체 개발 노드
+│       ├── mapping_pkg/             # [자체]  이중 LiDAR 맵 생성 런치 · 기록
 │       ├── serial_test/             # [수정]  모터 시리얼 · 휠 오도메트리
 │       ├── ebimu_pkg/               # [수정]  IMU 퍼블리셔 + EKF
 │       ├── sllidar_ros2/            # [수정]  RPLiDAR C1 ×2 드라이버
 │       ├── laser_filters/           # [활용]  LaserScan 각도 필터
-│       ├── amr_navigator/           # [수정]  Nav2 브링업 · 파라미터 · 맵
+│       ├── amr_navigator/           # [수정]  Nav2 위치추정 런치
 │       ├── amr_cartographer/        # [수정]  Cartographer SLAM (맵 생성용)
-│       ├── amr/                     # [수정]  URDF · 메시
+│       ├── amr/                     # [수정]  로봇 URDF
 │       ├── amr_msgs/                # [활용]  커스텀 메시지 정의
-│       └── ros2_laser_scan_merger/  # [미사용] 2-LiDAR 병합 (최종 구성 제외)
+│       └── third_impact/            # [자체]  이중 LiDAR AMCL · 목표 학습 · 주행
 │
 ├── air-scent-dashboard/             # 대시보드 (발향부 Jetson · 터치 패널)
 │   ├── src/                         # [자체]  React 19 + Vite UI
@@ -203,9 +203,8 @@ sequenceDiagram
 
 | 구성요소 | 내용 |
 |---|---|
-| `all_in_one_package` | 패키지 전체. 단계적 통합 런치 + 아래 두 노드 |
-| `post_goal_spin_node.py` | 목표 도착 후 제자리 회전으로 향을 확산시키고, 발향 완료 신호를 받으면 전역 코스트맵에서 최근접 벽을 찾아 **반대 방향으로 정위**한 뒤 정지하는 4-상태 FSM (IDLE / SPINNING / ORIENTING / HOLDING). `velocity_smoother`의 각속도 상한을 우회하기 위해 `/cmd_vel`에 직접 발행하고, 자체 가속 램프(4.0 rad/s²)로 급발진을 막습니다 |
-| `nav_debug_logger.py` | 로봇 포즈 · 목표 · `velocity_smoother` 전후 `cmd_vel` · 액션 상태를 CSV로 기록. goal_checker 허용오차 진입 순간을 표시해 "목표에 도달하고도 정지하지 못하는" 현상의 원인을 규명한 계측 노드 |
+| `mapping_pkg` | `generate_map.launch.py`: 모터 · IMU/EKF · 전후 LiDAR · Cartographer 맵 생성과 선택적 로그 기록 |
+| `third_impact` | 전후 LiDAR 가상 스캔을 이용한 AMCL 위치추정, 초기 위치추정, 목표 학습 · 순찰 · 복귀 및 RViz 패널 |
 | `air-scent-dashboard/src/**` | React UI 전체 (페이지 · 훅 · 서비스 · 유틸). Vite 템플릿에서 시작해 전량 작성 |
 | `air-scent-dashboard/server/**` | Python HTTP 브리지. 주행 · 공기질 · 발향 · LLM · STT · TTS. 표준 라이브러리 `http.server` 기반 |
 | `firmware/air_control/**` | Arduino Uno 발향 컨트롤러 (PlatformIO). 미스트 3채널 + 확산 팬 제어 |

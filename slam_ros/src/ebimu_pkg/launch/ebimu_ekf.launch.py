@@ -24,8 +24,10 @@ def generate_launch_description():
         DeclareLaunchArgument('imu_port', default_value='/dev/ttyUSB_IMU'),
         DeclareLaunchArgument('imu_baud', default_value='115200'),
         DeclareLaunchArgument('invert_yaw', default_value='false'),
+        DeclareLaunchArgument('orientation_format', default_value='quaternion'),
+        DeclareLaunchArgument('quaternion_field_indices', default_value='2,1,0,3'),
 
-        # 반드시 네 EBIMU raw 한 줄 형식에 맞게 바꿔야 함.
+        # Actual output: qz,qy,qx,qw,gx,gy,gz,ax,ay,az,...
         # 예) *roll,pitch,yaw,gx,gy,gz,ax,ay,az  -> gyro: 3,4,5 / accel: 6,7,8
         DeclareLaunchArgument('gyro_field_indices', default_value='4, 5, 6'),
         DeclareLaunchArgument('accel_field_indices', default_value='7, 8, 9'),
@@ -54,7 +56,9 @@ def generate_launch_description():
                 'invert_yaw': ParameterValue(invert_yaw, value_type=bool),
                 'invert_gyro_z_with_yaw': True,
 
-                # 기본값은 quick-start의 *roll,pitch,yaw
+                'orientation_format': LaunchConfiguration('orientation_format'),
+                'quaternion_field_indices': LaunchConfiguration('quaternion_field_indices'),
+                # Only used when orientation_format:=euler.
                 'rpy_field_indices': '0,1,2',
 
                 # full IMU publish용 인덱스 / 단위 설정

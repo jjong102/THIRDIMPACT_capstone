@@ -2,11 +2,23 @@ from launch import LaunchDescription
 from launch_ros.actions import Node
 import os
 from ament_index_python.packages import get_package_share_directory
-from launch.actions import IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, UnsetEnvironmentVariable
+from launch.conditions import LaunchConfigurationEquals
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 
 def generate_launch_description():
     ld = LaunchDescription()
+    ld.add_action(DeclareLaunchArgument(
+        'network',
+        default_value='wifi',
+        choices=['default', 'wifi'],
+        description='default: keep DDS settings; wifi: unset CYCLONEDDS_URI for automatic interface selection',
+    ))
+    # Apply before starting any nodes; the invoking shell is unaffected.
+    ld.add_action(UnsetEnvironmentVariable(
+        'CYCLONEDDS_URI',
+        condition=LaunchConfigurationEquals('network', 'wifi'),
+    ))
 
     node = Node(
         package="serial_test",
@@ -40,6 +52,16 @@ def generate_launch_description():
         parameters=[params]
     )
     ld.add_action(node_robot_state_publisher)
+
+    # Publish wheel joint positions so robot_state_publisher can create wheel TFs.
+    node_joint_state_publisher = Node(
+        package='joint_state_publisher',
+        executable='joint_state_publisher',
+        name='joint_state_publisher',
+        output='screen',
+        parameters=[params]
+    )
+    ld.add_action(node_joint_state_publisher)
 
     # Add rviz node
     # node_rviz = Node(

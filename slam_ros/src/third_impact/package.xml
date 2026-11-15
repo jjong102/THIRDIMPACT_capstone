@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>third_impact</name><version>0.1.0</version>
+  <description>Persistent goal teaching, patrol, lidar-assisted return and remote RViz tools.</description>
+  <maintainer email="moonshot@example.com">moonshot</maintainer><license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend><buildtool_depend>ament_cmake_python</buildtool_depend>
+  <build_depend>qtbase5-dev</build_depend>
+  <depend>rclcpp</depend><depend>std_msgs</depend><depend>rviz_common</depend><depend>pluginlib</depend>
+  <depend>dwb_core</depend><depend>nav2_util</depend><depend>rclcpp_lifecycle</depend>
+  <exec_depend>rclpy</exec_depend><exec_depend>nav2_msgs</exec_depend><exec_depend>action_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend><exec_depend>nav_msgs</exec_depend><exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend><exec_depend>lifecycle_msgs</exec_depend>
+  <exec_depend>visualization_msgs</exec_depend><exec_depend>tf2_ros</exec_depend>
+  <exec_depend>interactive_markers</exec_depend><exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-scipy</exec_depend><exec_depend>python3-yaml</exec_depend>
+  <exec_depend>launch_ros</exec_depend><exec_depend>ament_index_python</exec_depend>
+  <exec_depend>rosbag2_transport</exec_depend><exec_depend>rosbag2_storage_default_plugins</exec_depend>
+  <exec_depend>rviz2</exec_depend><exec_depend>serial_test</exec_depend><exec_depend>amr</exec_depend>
+  <exec_depend>rviz_default_plugins</exec_depend><exec_depend>nav2_lifecycle_manager</exec_depend>
+  <exec_depend>nav2_controller</exec_depend><exec_depend>nav2_planner</exec_depend>
+  <exec_depend>nav2_behaviors</exec_depend><exec_depend>nav2_bt_navigator</exec_depend>
+  <exec_depend>nav2_waypoint_follower</exec_depend><exec_depend>nav2_velocity_smoother</exec_depend>
+  <exec_depend>nav2_smoother</exec_depend><exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>joint_state_publisher</exec_depend><exec_depend>joy</exec_depend>
+  <exec_depend>ebimu_pkg</exec_depend><exec_depend>sllidar_ros2</exec_depend><exec_depend>amr_navigator</exec_depend>
+  <export><build_type>ament_cmake</build_type><rviz_common plugin="${prefix}/plugins.xml"/></export>
+</package>

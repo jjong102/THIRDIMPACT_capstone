@@ -17,6 +17,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, ThisLaunchFileDir
 from launch_ros.actions import Node
@@ -48,6 +49,10 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument(
+            'use_rviz', default_value='true',
+            description='Run RViz on this machine'
+        ),
+        DeclareLaunchArgument(
             'cartographer_config_dir',
             default_value=cartographer_config_dir,
             description='Full path to config file to load'
@@ -76,9 +81,9 @@ def generate_launch_description():
                 '-configuration_basename', configuration_basename
             ],
             remappings=[
-                ('scan', '/rplidar1/scan_filtered'),
-                #('scan_1', '/rplidar1/scan_filtered'),
-                #('scan_2', '/rplidar2/scan_filtered'),
+                # Preserve each sensor origin, frame and acquisition timestamp.
+                ('scan_1', '/rplidar1/scan_filtered'),
+                ('scan_2', '/rplidar2/scan_filtered'),
 
                 # 기존: ('odom', '/wheel/odometry')
                 # 변경: EKF가 publish하는 /odom 사용
@@ -111,6 +116,7 @@ def generate_launch_description():
 
         Node(
             package='rviz2',
+            condition=IfCondition(LaunchConfiguration('use_rviz')),
             executable='rviz2',
             name='rviz2',
             arguments=['-d', rviz_config_dir],

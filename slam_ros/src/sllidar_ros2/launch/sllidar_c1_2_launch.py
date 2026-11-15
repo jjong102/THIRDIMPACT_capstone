@@ -94,6 +94,20 @@ def generate_launch_description():
                         'lower_angle': -1.5708,
                         'upper_angle': 1.5708
                     }
+                },
+                # Remove only returns inside the 70 x 44 cm physical footprint.
+                # Use TF, not a sensor-centred range cutoff, so close external
+                # obstacles remain visible. Removed beams become NaN, not free rays.
+                'filter2': {
+                    'name': 'body_self_filter',
+                    'type': 'laser_filters/LaserScanBoxFilter',
+                    'params': {
+                        'box_frame': 'base_link',
+                        'min_x': -0.35, 'max_x': 0.35,
+                        'min_y': -0.22, 'max_y': 0.22,
+                        'min_z': -0.1, 'max_z': 0.5,
+                        'invert': False,
+                    }
                 }
             }],
             # remappings=[('rplidar1/scan', '/scan')],
@@ -161,6 +175,20 @@ def generate_launch_description():
                     'params': {
                         'lower_angle': -1.5708,
                         'upper_angle': 1.5708
+                    }
+                },
+                # Remove only returns inside the 70 x 44 cm physical footprint.
+                # Use TF, not a sensor-centred range cutoff, so close external
+                # obstacles remain visible. Removed beams become NaN, not free rays.
+                'filter2': {
+                    'name': 'body_self_filter',
+                    'type': 'laser_filters/LaserScanBoxFilter',
+                    'params': {
+                        'box_frame': 'base_link',
+                        'min_x': -0.35, 'max_x': 0.35,
+                        'min_y': -0.22, 'max_y': 0.22,
+                        'min_z': -0.1, 'max_z': 0.5,
+                        'invert': False,
                     }
                 }
             }],

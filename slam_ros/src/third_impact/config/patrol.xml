@@ -1,0 +1,15 @@
+<!-- Patrol recovery is owned by the supervisor: cancel, measured stop,
+     collision-checked in-place rotation, then retry the SAME target. -->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <PipelineSequence name="NavigateWithReplanning">
+      <RateController hz="1.0">
+        <RecoveryNode number_of_retries="1" name="ComputePathToPose">
+          <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+          <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
+        </RecoveryNode>
+      </RateController>
+      <FollowPath path="{path}" controller_id="PatrolFollowPath" goal_checker_id="patrol_goal_checker"/>
+    </PipelineSequence>
+  </BehaviorTree>
+</root>
