@@ -52,8 +52,7 @@ THIRDIMPACT_capstone/
 │
 ├── firmware/air_control/            # [자체]  Arduino 발향 컨트롤러 (PlatformIO)
 ├── ward_bme688/                     # [자체]  와드: BME688 ×8 온디바이스 향기·악취 판정 (ESP32 → MQTT)
-│   ├── inference/                   #         지금 쓰는 펌웨어·모델·도구, INTERFACE.md(연동 규격)
-│   └── archive/                     #         9~10월 예전 방식 (BSEC 분류 등, 보관만)
+│   └── inference/                   #         펌웨어·모델·도구·문서, INTERFACE.md(연동 규격)
 └── docs/                            # 특허 · 기획 문서
 ```
 > **주행 코드 위치**: 지금 로봇에서 도는 주행은 별도 저장소 `capstone_final_ws` 의 `third_impact` 패키지(`impact_launch.py`)다.

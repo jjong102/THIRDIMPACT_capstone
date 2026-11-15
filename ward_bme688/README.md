@@ -8,14 +8,14 @@ UI Jetson 서버가 그 신호를 받아 주행 Jetson 에 `/go_to_goal` 을 보
 |---|---|---|
 | **[inference/](inference/)** | **지금 쓰는 것** — 와드 펌웨어(수집·판정 하나), 판정 모델, 파이썬 도구(수집·라벨·학습·평가·모델 무선 전송) | 사용 중 |
 | [inference/INTERFACE.md](inference/INTERFACE.md) | 와드 ↔ UI Jetson ↔ 주행 Jetson 메시지 규격 (MQTT 판정 JSON, 출동·도착 흐름) | 확정 (11/09) |
-| [archive/](archive/) | 9~10월 예전 방식 — BSEC/AI-Studio 분류(woody/citrus/floral), SD 로거, 시험 펌웨어, 옛 문서 | 보관만 (쓰지 않음) |
 
 시작은 [inference/README.md](inference/README.md) — 판정 원리, 폴더, 실행 순서, 성능, 모델 갱신이 정리돼 있다.
 
 ```
 측정(8센서, 9.8초 사이클) → 기준선과의 차이 Δ → 세기 |Δ|·방향 → 각도로 가장 가까운 냄새 → 8센서 표결
-→ 악취 3라운드(약 30초) 연속 → MQTT diffuser/ward-01/inference_ward  event:"ON"
+→ 악취 2라운드 연속(강하고 8센서 만장일치면 1라운드, 반응 중앙 약 21초) → MQTT diffuser/ward-01/inference_ward  event:"ON"
 ```
 
 - 코드 원본은 개발 폴더(git)이고, 이 폴더의 `inference/` 는 그 스냅샷이다(`inference/tools/publish_team.py` 로 올림). 이 저장소에서 직접 고치면 다음 동기화 때 덮어써질 수 있으니 담당(윤우빈)에게 알린다.
-- 예전 BSEC 라이브러리 바이너리(`libalgobsec.a`)는 Bosch 라이선스(재배포 제한) 때문에 저장소에서 뺐다. 예전 펌웨어를 다시 빌드하려면 Bosch 에서 BSEC 2.6.1.0 을 받아 넣는다.
+- 9~10월 예전 방식(BSEC/AI-Studio 분류 woody/citrus/floral, SD 로거, 시험 펌웨어)은 11/15 저장소에서 지웠다. 필요하면 git 기록에서 꺼낸다:
+  `git checkout 0639340 -- ward_bme688/archive` (PR #6 병합 시점). BSEC 바이너리(`libalgobsec.a`)는 라이선스 때문에 그전부터 없다.
