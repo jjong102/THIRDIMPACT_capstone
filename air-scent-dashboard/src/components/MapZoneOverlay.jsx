@@ -51,8 +51,9 @@ function screenBottomCenter(polygon, mapLayout) {
 /**
  * 한계구역(파란 구간)과 정찰제한구역(주황 방)을 주행 지도 위에 그린다.
  * 정찰제한구역은 집 핀과 따로인 방 이름표로 둔다.
+ * 평소에는 "ROOM", 구역을 설정할 때(setupMode)만 "정찰제한구역"으로 보인다.
  */
-export default function MapZoneOverlay({ mapLayout, mapMeta }) {
+export default function MapZoneOverlay({ mapLayout, mapMeta, setupMode = false }) {
   const [zones, setZones] = useState(null);
 
   useEffect(() => {
@@ -126,7 +127,7 @@ export default function MapZoneOverlay({ mapLayout, mapMeta }) {
           style={{ left: `${roomScreen.x}%`, top: `${roomScreen.y}%` }}
         >
           <House size={14} strokeWidth={2.4} aria-hidden="true" />
-          <span>정찰제한구역</span>
+          <span>{setupMode ? "정찰제한구역" : "ROOM"}</span>
         </div>
       ) : null}
     </>

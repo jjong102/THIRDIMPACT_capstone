@@ -1,0 +1,197 @@
+/* 주행 Jetson launch 상태 버튼 — '위치 추정' 버튼과 같은 크기 */
+.robot-launch {
+  position: relative;
+  min-width: 0;
+}
+
+.robot-launch-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 52px;
+  padding: 8px 6px;
+  border-radius: 12px;
+  border: 1.5px solid #e2e8f0;
+  background: #f1f5f9;
+  color: #64748b;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.2;
+  font-weight: 900;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 0.12s ease;
+}
+
+.robot-launch-btn:active {
+  transform: scale(0.98);
+}
+
+.robot-launch-btn em {
+  font-style: normal;
+  font-weight: 900;
+}
+
+.robot-launch-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.robot-launch-btn.is-on {
+  color: #047857;
+  background: #ecfdf5;
+  border-color: #6ee7b7;
+}
+
+.robot-launch-btn.is-on.is-warn {
+  color: #b45309;
+  background: #fffbeb;
+  border-color: #fcd34d;
+}
+
+.robot-launch-btn.is-starting {
+  color: #0369a1;
+  background: #e0f2fe;
+  border-color: #7dd3fc;
+}
+
+.robot-launch-btn.is-stopping {
+  color: #c2410c;
+  background: #fff7ed;
+  border-color: #fdba74;
+}
+
+.robot-launch-btn.is-starting .robot-launch-dot,
+.robot-launch-btn.is-stopping .robot-launch-dot {
+  animation: robot-launch-blink 0.9s ease-in-out infinite;
+}
+
+.robot-launch-btn.is-unknown {
+  color: #94a3b8;
+  background: #f8fafc;
+  border-style: dashed;
+}
+
+@keyframes robot-launch-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.2;
+  }
+}
+
+/* 버튼 위로 펼쳐지는 확인 창 (body 에 고정 위치로 띄움) */
+.robot-launch-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  background: rgba(15, 23, 42, 0.08);
+}
+
+.robot-launch-pop {
+  position: fixed;
+  z-index: 9999;
+  width: min(320px, 80vw);
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.14);
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+  text-align: left;
+}
+
+.robot-launch-pop p {
+  margin: 0 0 4px;
+}
+
+.robot-launch-pop .robot-launch-cmd {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  color: #64748b;
+  word-break: break-all;
+}
+
+.robot-launch-text {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.15;
+}
+
+.robot-launch-text small {
+  font-size: 11px;
+  font-weight: 800;
+  opacity: 0.75;
+}
+
+.robot-launch-btn:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.robot-launch-q {
+  font-size: 15px;
+  font-weight: 900;
+  color: #0f172a;
+}
+
+.robot-launch-note {
+  color: #b45309;
+}
+
+.robot-launch-error {
+  color: #b91c1c;
+}
+
+.robot-launch-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.robot-launch-actions button {
+  min-height: 44px;
+  border-radius: 10px;
+  border: none;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 900;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.robot-launch-cancel {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.robot-launch-confirm {
+  color: #ffffff;
+}
+
+.robot-launch-confirm.is-start {
+  background: linear-gradient(135deg, #16a34a, #15803d);
+}
+
+.robot-launch-confirm.is-stop,
+.robot-launch-confirm.is-force_stop {
+  background: linear-gradient(135deg, #ef4444, #b91c1c);
+}
+
+.robot-launch-confirm:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}

@@ -1,6 +1,4 @@
-import { applyMistScale } from "./fragranceIntensity";
-
-/** 명령 Mxyz 자리 순서 = 펌웨어 MIST_MINT_PIN(D3), MIST_LAVENDER_PIN(D4), MIST_ORANGE_PIN(D5) */
+/** 채널 순서 = 펌웨어 D3(페퍼민트 MNT), D4(라벤더 LVD), D5(오렌지 ORG) */
 export const MIST_CHANNELS = ["mint", "lavender", "orange"];
 
 /** 펌웨어: 가중치 1 = 1000ms */
@@ -40,46 +38,24 @@ export function blendToWeights(blend) {
   return weights.map((weight) => String(weight)).join("");
 }
 
-export function buildMistDigits({
-  fragranceOn,
-  fragranceChannels,
-  mistScale = 1,
-}) {
-  if (!fragranceOn) {
-    return "000";
-  }
+/** 펌웨어 채널 이름 (air_control 2.1): MIST MNT+LVD / MIST ALL / MIST OFF */
+export const MIST_NAMES = { mint: "MNT", lavender: "LVD", orange: "ORG" };
+export const MIST_OFF_COMMAND = "MIST OFF";
 
-  const active = MIST_CHANNELS.map((id) => fragranceChannels?.[id] === true);
-  if (!active.some(Boolean)) {
-    return "000";
-  }
-
-  // 켜진 채널은 모두 같은 시간 분사한다. 블렌드 비율로 나누면 수동으로 켠 채널이
-  // 남은 레시피 비율(예: Mint 100%) 때문에 1초만 켜졌다 꺼진다.
-  return applyMistScale(
-    active.map((isOn) => (isOn ? "9" : "0")).join(""),
-    mistScale
-  );
+/**
+ * 켜진 채널 → 분무 명령 한 줄. 켜진 채널은 끊김 없이 계속 분무한다 (세기는 항상 최대).
+ * mistScale 은 0 이하(목표 도달)일 때 끄는 데만 쓴다.
+ */
+export function buildMistCommand({ fragranceOn, fragranceChannels, mistScale = 1 }) {
+  if (!fragranceOn || mistScale <= 0) return MIST_OFF_COMMAND;
+  const active = MIST_CHANNELS.filter((id) => fragranceChannels?.[id] === true);
+  if (active.length === 0) return MIST_OFF_COMMAND;
+  if (active.length === MIST_CHANNELS.length) return "MIST ALL";
+  return `MIST ${active.map((id) => MIST_NAMES[id]).join("+")}`;
 }
 
-/** air_control.ino: M133 미스트만 켜기, M000 미스트만 끄기 (팬은 그대로) */
-export function buildFragranceCommand({
-  fragranceOn,
-  fragranceBlend,
-  fragranceChannels,
-  mistScale = 1,
-}) {
-  const mist = buildMistDigits({
-    fragranceOn,
-    fragranceBlend,
-    fragranceChannels,
-    mistScale,
-  });
-
-  return {
-    mist,
-    command: `M${mist}`,
-  };
+export function buildFragranceCommand(args) {
+  return { command: buildMistCommand(args) };
 }
 
 export function weightToSeconds(weight) {

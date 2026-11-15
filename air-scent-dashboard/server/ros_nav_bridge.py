@@ -30,6 +30,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from arrival_sequence import ArrivalSequence  # noqa: E402  도착 후 자동 청정·발향
 from ward_dispatch import WardDispatch  # noqa: E402  와드 악취 → /go_to_goal
+from robot_launch import RobotLaunchWatch  # noqa: E402  주행 launch 켜짐/꺼짐 감시
 
 PORT = int(os.environ.get("ROS_NAV_BRIDGE_PORT", "5179"))
 INITIAL_TOPIC = os.environ.get("ROS_INITIAL_POSE_TOPIC", "initialpose")
@@ -103,6 +104,8 @@ _interfaces_ready = False
 _lock = threading.Lock()
 _init_lock = threading.Lock()
 _spin_thread = None
+# 브리지 전용 ROS 컨텍스트. 끊기면 새로 만든다 (기본 컨텍스트는 한 번 끊기면 다시 init 불가).
+_ctx = None
 _last_error: str | None = None
 _goal_count = 0
 _initial_count = 0
@@ -421,6 +424,8 @@ def _on_impact_status(msg) -> None:
     robot_mode = None
     detail = None
     loc_state = None
+    loc_ready = None
+    nav_active = None
     manual = _manual_control
     if isinstance(payload, dict):
         robot_mode = str(payload.get("mode") or "").strip().lower() or None
@@ -430,6 +435,13 @@ def _on_impact_status(msg) -> None:
         loc = payload.get("localization")
         if isinstance(loc, dict):
             loc_state = str(loc.get("state") or "").strip().upper() or None
+            # 로봇은 READY 뿐 아니라 DEGRADED 에서도 ready=true 로 주행한다. 이름 말고 ready 를 본다.
+            loc_ready = _as_bool(loc.get("ready"))
+            if loc.get("fresh") is False:
+                loc_ready = False
+        nav = payload.get("navigation")
+        if isinstance(nav, dict):
+            nav_active = str(nav.get("phase") or "") in ("requesting", "executing")
         if "manual" in payload:
             manual = bool(payload.get("manual"))
             _manual_control = manual
@@ -439,7 +451,7 @@ def _on_impact_status(msg) -> None:
             phase = "manual"
     elif manual:
         phase = "manual"
-    key = (phase, ready, aligned, manual, robot_mode, detail, loc_state)
+    key = (phase, ready, aligned, manual, robot_mode, detail, loc_state, loc_ready, nav_active)
     if key == _last_status_key and _pending_motion is None:
         return
     _last_status_key = key
@@ -455,9 +467,13 @@ def _on_impact_status(msg) -> None:
     if detail:
         display["robotDetail"] = detail
         display["lastEvent"] = detail
+    if nav_active is not None:
+        display["navActive"] = nav_active
     if loc_state:
         display["localizationState"] = loc_state
-        display["locStatus"] = "localized" if loc_state == "READY" else "not_localized"
+        if loc_ready is None:
+            loc_ready = loc_state == "READY"
+        display["locStatus"] = "localized" if loc_ready else "not_localized"
     motion = _motion_patch(shown, manual)
     if time.time() < _arrival_hold_until:
         _pending_motion = motion
@@ -683,8 +699,50 @@ def _schedule_saved_pose_seed(raw: str) -> None:
     threading.Thread(target=_seed_saved_pose_once, daemon=True).start()
 
 
+# 로봇 위치 추정 일치율 (화면 표시용). 자주 바뀌므로 UI rev 를 올리지 않고 snapshot 에만 붙인다.
+_loc_quality: dict | None = None
+
+
+def _pct(value) -> int | None:
+    try:
+        return round(float(value) * 100)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_loc_quality(raw: str) -> dict | None:
+    try:
+        data = json.loads(raw)
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(data, dict):
+        return None
+    q = data.get("quality")
+    if not isinstance(q, dict):
+        return None
+    sensors = q.get("sensors") if isinstance(q.get("sensors"), dict) else {}
+    front = sensors.get("front") if isinstance(sensors.get("front"), dict) else {}
+    rear = sensors.get("rear") if isinstance(sensors.get("rear"), dict) else {}
+    need = front.get("min_overlap") or rear.get("min_overlap")
+    score = q.get("score")
+    return {
+        "state": data.get("state"),
+        "valid": bool(q.get("valid")),
+        "front": _pct(front.get("overlap")),
+        "rear": _pct(rear.get("overlap")),
+        "need": _pct(need),
+        # score = 벽 경계 오차(m)
+        "err_cm": round(float(score) * 100, 1) if isinstance(score, (int, float)) else None,
+        "at": time.time(),
+    }
+
+
 def _on_localization(msg) -> None:
+    global _loc_quality
     raw = str(getattr(msg, "data", "") or "").strip()
+    quality = _parse_loc_quality(raw)
+    if quality is not None:
+        _loc_quality = quality
     loc = _interpret_localization(raw)
     patch = {"localizationText": raw[:180]}
     if loc in LOC_STATUS_VALUES:
@@ -795,7 +853,8 @@ def _ensure_mission_interfaces() -> None:
 def _ros_handles_alive() -> bool:
     return (
         rclpy is not None
-        and rclpy.ok()
+        and _ctx is not None
+        and _ctx.ok()
         and _node is not None
         and _empty_pubs.get("go_to_goal") is not None
         and _initial_pub is not None
@@ -816,7 +875,7 @@ def _reset_ros_handles() -> None:
 
 
 def ensure_ros() -> bool:
-    global _node, _initial_pub, _amcl_sub, _spin_thread, _last_error
+    global _node, _initial_pub, _amcl_sub, _spin_thread, _last_error, _ctx
 
     if _ros_handles_alive():
         return True
@@ -834,18 +893,24 @@ def ensure_ros() -> bool:
     assert DurabilityPolicy is not None
 
     with _init_lock:
-        if (
-            _empty_pubs.get("go_to_goal") is not None
-            and _initial_pub is not None
-            and _amcl_sub is not None
-        ):
+        if _ros_handles_alive():
             return True
 
         try:
-            if not rclpy.ok():
-                rclpy.init(args=None)
+            if _ctx is None or not _ctx.ok():
+                from rclpy.context import Context
+                from rclpy.signals import SignalHandlerOptions
 
-            _node = rclpy.create_node("dashboard_nav_bridge")
+                # rclpy 시그널 핸들러를 끈다. 켜 두면 vite 가 보낸 SIGTERM 에
+                # 프로세스는 살아 있고 ROS 만 끊겨, 위치·명령이 조용히 멈춘다.
+                _ctx = Context()
+                rclpy.init(
+                    args=None,
+                    context=_ctx,
+                    signal_handler_options=SignalHandlerOptions.NO,
+                )
+
+            _node = rclpy.create_node("dashboard_nav_bridge", context=_ctx)
             _initial_pub = _node.create_publisher(
                 PoseWithCovarianceStamped,
                 INITIAL_TOPIC,
@@ -871,9 +936,14 @@ def ensure_ros() -> bool:
             )
             _node.create_timer(0.5, _flush_arrival_hold)
 
+            from rclpy.executors import SingleThreadedExecutor
+
+            executor = SingleThreadedExecutor(context=_ctx)
+            executor.add_node(_node)
+
             def _spin() -> None:
                 try:
-                    rclpy.spin(_node)
+                    executor.spin()
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -933,6 +1003,12 @@ def publish_initial_pose(
     assert _node is not None
     assert _initial_pub is not None
     assert PoseWithCovarianceStamped is not None
+
+    # 받는 노드(주행 Jetson 의 위치 추정)가 없으면 보내도 사라진다. 화면에 실패로 알린다.
+    if _initial_pub.get_subscription_count() == 0:
+        _last_error = "로봇 주행 프로그램이 꺼져 있습니다 (/initialpose 받는 노드 없음)"
+        print(f"[ros-nav-bridge] initialpose 안 보냄: {_last_error}", file=sys.stderr)
+        return False
 
     msg = PoseWithCovarianceStamped()
     msg.header.stamp = _node.get_clock().now().to_msg()
@@ -1232,6 +1308,7 @@ def default_ui_state() -> dict:
         "missionReady": None,
         "missionAligned": None,
         "manualControl": False,
+        "navActive": False,
         "arrivalId": 0,
         "lastEvent": None,
         "localizationText": None,
@@ -1349,6 +1426,7 @@ def _load_ui_state() -> dict:
         else None
     )
     state["manualControl"] = bool(state.get("manualControl"))
+    state["navActive"] = bool(state.get("navActive"))
     try:
         state["arrivalId"] = max(0, int(state.get("arrivalId") or 0))
     except (TypeError, ValueError):
@@ -1397,9 +1475,27 @@ _ui_lock = threading.Lock()
 _ui_state = _load_ui_state()
 
 
+_robot_launch: RobotLaunchWatch | None = None
+_ward_dispatch: WardDispatch | None = None
+
+
+def _robot_link_ok() -> bool:
+    """UI 에서 주행 노드가 보이는지: /initialpose 받는 노드가 있으면 연결된 것."""
+    pub = _initial_pub
+    return pub is not None and pub.get_subscription_count() > 0
+
+
 def snapshot_ui() -> dict:
     with _ui_lock:
         snap = json.loads(json.dumps(_ui_state))
+    if _robot_launch is not None:
+        snap["robotLaunch"] = _robot_launch.snapshot()
+    if _ward_dispatch is not None:
+        # 와드 판정 최근 기록 (화면 막대그래프). rev 를 올리지 않는다.
+        snap["wardHistory"] = _ward_dispatch.history()
+    quality = _loc_quality
+    if quality is not None and time.time() - quality.get("at", 0) < 10:
+        snap["localizationQuality"] = quality
     for ward in snap.get("wards") or []:
         if isinstance(ward, dict):
             ward["name"] = _display_ward_name(ward.get("id"), ward.get("name"))
@@ -1449,6 +1545,9 @@ def merge_ui(patch: dict | None) -> dict:
             _ui_state["missionAligned"] = aligned if isinstance(aligned, bool) else None
         if "manualControl" in patch:
             _ui_state["manualControl"] = bool(patch.get("manualControl"))
+        if "navActive" in patch:
+            # 로봇이 실제로 주행(목표 요청·실행) 중인지
+            _ui_state["navActive"] = bool(patch.get("navActive"))
         if "arrivalId" in patch:
             try:
                 _ui_state["arrivalId"] = max(0, int(patch.get("arrivalId") or 0))
@@ -1540,6 +1639,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0]
+        if path == "/api/nav/robot_launch":
+            self._send_json(
+                200,
+                _robot_launch.snapshot() if _robot_launch else {"state": "unknown"},
+            )
+            return
         if path == "/api/nav/pose":
             self._send_json(200, get_amcl_pose())
             return
@@ -1612,6 +1717,20 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0]
+        if path == "/api/nav/robot_launch":
+            # 화면 버튼: {"action": "start" | "stop" | "force_stop"}
+            length = int(self.headers.get("Content-Length", "0"))
+            try:
+                body = json.loads(self.rfile.read(length) or b"{}") if length else {}
+            except Exception:  # noqa: BLE001
+                body = {}
+            if _robot_launch is None:
+                self._send_json(503, {"ok": False, "error": "감시가 아직 시작되지 않았습니다"})
+                return
+            result = _robot_launch.control(str(body.get("action") or ""))
+            self._send_json(200 if result.get("ok") else 409, result)
+            return
+
         if path == "/api/nav/cancel":
             length = int(self.headers.get("Content-Length", "0"))
             if length:
@@ -1630,6 +1749,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.rfile.read(length)
             result = publish_diffusion_complete()
             self._send_json(200 if result.get("ok") else 503, result)
+            return
+
+        if path == "/api/nav/fragrance/stop":
+            # 화면 '발향 중지': 도착 순서가 돌면 멈추고, 아니면 분무만 끈다
+            length = int(self.headers.get("Content-Length", "0"))
+            if length:
+                self.rfile.read(length)
+            result = _get_sequence().stop_mist()
+            self._send_json(200 if result.get("ok") else 502, result)
             return
 
         if path in ("/api/nav/arrival_sequence/test", "/api/nav/arrival_sequence/stop"):
@@ -1764,7 +1892,14 @@ def main() -> None:
     )
     _import_ros()
     threading.Thread(target=ensure_ros, daemon=True).start()
-    WardDispatch(publish_goal, snapshot_ui, merge_ui, lambda: _get_sequence().running()).start()
+    global _ward_dispatch
+    _ward_dispatch = WardDispatch(publish_goal, snapshot_ui, merge_ui, lambda: _get_sequence().running())
+    _ward_dispatch.start()
+    global _robot_launch
+    _robot_launch = RobotLaunchWatch(
+        link_check=_robot_link_ok,
+        log=lambda msg: print(f"[ros-nav-bridge] {msg}", file=sys.stderr),
+    ).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -1772,8 +1907,9 @@ def main() -> None:
     finally:
         server.server_close()
         try:
-            if rclpy is not None and rclpy.ok() and _node is not None:
+            if _ctx is not None and _ctx.ok() and _node is not None:
                 _node.destroy_node()
+                rclpy.shutdown(context=_ctx)
         except Exception:  # noqa: BLE001
             pass
 

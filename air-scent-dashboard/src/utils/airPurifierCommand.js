@@ -17,17 +17,16 @@ export const AIR_PURIFIER_MODE_LABELS = {
   [AIR_PURIFIER_MODE.SLEEP]: "수면모드",
 };
 
-/** 펌웨어에 FANON/FANOFF 없음. 팬만 켤 때는 ON000, 끌 때는 OFF+현재미스트 */
+/** 펌웨어 air_control 2.1: 청정기와 분무는 따로 명령한다 (FAN … / MIST …) */
 export function buildAirOnCommand() {
-  return "ON000";
+  return "FAN ON";
 }
 
-export function buildAirOffCommand(mistDigits = "000") {
-  const digits = String(mistDigits).padEnd(3, "0").slice(0, 3);
-  return `OFF${digits}`;
+export function buildAirOffCommand() {
+  return "FAN OFF";
 }
 
-export const AIR_PURIFIER_MODE_COMMAND = "MODE";
+export const AIR_PURIFIER_MODE_COMMAND = "FAN MODE";
 
 /** 공청기 릴레이는 건드리지 않고, 웹/펌웨어가 기억하는 현재 상태만 맞춘다. */
 export function buildAirSyncCommand(on, mode = 1) {

@@ -1490,3 +1490,45 @@
   opacity: 0.7;
   cursor: default;
 }
+
+/* 향기 분무 시간 [계속][30초][60초] (11/15) */
+.more-spray-timer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.more-spray-timer-label {
+  font-size: 13px;
+  font-weight: 800;
+  color: #475569;
+  margin-right: 4px;
+}
+
+.more-spray-timer-btn {
+  min-width: 64px;
+  padding: 8px 14px;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.more-spray-timer-btn.selected {
+  border-color: #6d28d9;
+  background: #f5f3ff;
+  color: #6d28d9;
+}
+
+.more-spray-timer-left {
+  margin-left: auto;
+  font-size: 13px;
+  font-weight: 800;
+  color: #6d28d9;
+  font-variant-numeric: tabular-nums;
+}

@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """arrival_sequence.py — 와드 도착 뒤 자동 청정·발향 (UI Jetson, ros_nav_bridge 가 부른다)
 
-  /arrival_at_goal ─▶ ① 청정  : 청정기 ON (ON000)                      ARRIVAL_PURIFY_SEC 초
+  /arrival_at_goal ─▶ ① 청정  : 청정기 ON (FAN ON)                     ARRIVAL_PURIFY_SEC 초
                       ② 발향  : 고른 향 채널 분무 (청정기는 꺼 둠)        ARRIVAL_SPRAY_SEC 초
+                                (세 향 동시 — 펌웨어가 0.3초씩 늦춰 켬)
                                 + 와드에 MQTT "SPRAY <초> <이름>" → 와드가 발향 중 + 3분 재출동 안 함
-                      ③ 정리  : 청정기·발향 전부 끔 (OFF000) → /go_around (정찰 재개)
+                      ③ 정리  : 청정기·발향 전부 끔 (FAN OFF + MIST OFF) → /go_around (정찰 재개)
 
 - 화면(브라우저)이 꺼져 있어도 돈다. 중간에 멈추면(취소·정찰 재개·stop) ③의 '전부 끔'은 항상 한다.
-- 향: ARRIVAL_SCENT=auto 면 화면에서 마지막으로 고른 블렌드(fragrance_bridge state), 없으면 lavender.
-- 설정(환경변수): ARRIVAL_SEQUENCE(1/0) · ARRIVAL_PURIFY_SEC(60) · ARRIVAL_SPRAY_SEC(60) ·
-  ARRIVAL_SCENT(auto|mint|lavender|orange) · ARRIVAL_PURIFIER_DURING_SPRAY(0) · FRAGRANCE_BRIDGE_URL · WARD_DEVICE_ID(ward-01)
+- 향: ARRIVAL_SCENT=all(기본) 이면 세 향 모두. auto 면 화면에서 마지막으로 고른 블렌드, 없으면 lavender.
+- 설정(환경변수): ARRIVAL_SEQUENCE(1/0) · ARRIVAL_PURIFY_SEC(10) · ARRIVAL_SPRAY_SEC(30) ·
+  ARRIVAL_SCENT(all|auto|mint|lavender|orange) · ARRIVAL_PURIFIER_DURING_SPRAY(0) · FRAGRANCE_BRIDGE_URL · WARD_DEVICE_ID(ward-01)
+- 화면 '발향 중지' → stop_mist(): 순서가 돌면 멈추고 전부 끔, 아니면 분무만 끔.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ import urllib.request
 
 CHANNELS = ("mint", "lavender", "orange")            # MIST1 · MIST2 · MIST3 (fragranceCommand.js MIST_CHANNELS)
 WARD_NAME = {"mint": "peppermint", "lavender": "lavender", "orange": "orange"}
+MIST_NAME = {"mint": "MNT", "lavender": "LVD", "orange": "ORG"}   # 펌웨어 air_control 2.1 채널 이름
 
 
 def _env_float(name: str, default: float) -> float:
@@ -40,9 +43,9 @@ class ArrivalSequence:
         self.log = log or self._default_log
         self.log_path = os.environ.get("ARRIVAL_LOG", "/tmp/arrival_sequence.log")
         self.enabled = os.environ.get("ARRIVAL_SEQUENCE", "1").strip() not in ("0", "false", "no", "")
-        self.purify_sec = _env_float("ARRIVAL_PURIFY_SEC", 60.0)
-        self.spray_sec = _env_float("ARRIVAL_SPRAY_SEC", 60.0)
-        self.scent = os.environ.get("ARRIVAL_SCENT", "auto").strip().lower()
+        self.purify_sec = _env_float("ARRIVAL_PURIFY_SEC", 10.0)
+        self.spray_sec = _env_float("ARRIVAL_SPRAY_SEC", 30.0)
+        self.scent = os.environ.get("ARRIVAL_SCENT", "all").strip().lower()
         self.purifier_during_spray = os.environ.get("ARRIVAL_PURIFIER_DURING_SPRAY", "0").strip() == "1"
         self.fragrance_url = os.environ.get("FRAGRANCE_BRIDGE_URL", "http://127.0.0.1:5174").rstrip("/")
         self.device = os.environ.get("WARD_DEVICE_ID", "ward-01")
@@ -81,7 +84,7 @@ class ArrivalSequence:
         return {"ok": True, "purify_sec": p, "spray_sec": s, "reason": reason}
 
     def stop(self, wait: float = 5.0) -> dict:
-        """진행 중이면 멈추고 청정기·발향을 끈다 (/go_around 는 보내지 않음 — 부른 쪽이 정한다)."""
+        """진행 중이면 멈추고 청정기·발향을 끈다. 안 돌 때는 아무것도 안 한다 (/go_around 는 부른 쪽이 정한다)."""
         was = self.running()
         if was:
             import traceback
@@ -90,9 +93,40 @@ class ArrivalSequence:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=wait)
-        if not was:
-            self._all_off("멈춤 요청")
+        # 순서가 돌던 경우엔 스레드 finally 에서 이미 전부 끔.
+        # 안 돌 때는 아무것도 끄지 않는다 — 손으로 켠 청정기·발향을 정찰 재개·취소가 꺼 버리던 문제(11/15).
         return {"ok": True, "was_running": was, "status": self.status()}
+
+    def stop_mist(self) -> dict:
+        """화면 '발향 중지'. 도착 후 순서가 돌면 멈추고 전부 끈다. 아니면 분무만 끈다."""
+        if self.running():
+            self.log("화면 발향 중지 → 도착 순서 멈춤")
+            self._stop.set()
+            if self._thread is not None:
+                self._thread.join(timeout=8)  # 스레드 finally 에서 전부 끔
+            return {"ok": True, "stopped_sequence": True}
+
+        self.log("화면 발향 중지 → 분무만 끔")
+        mist_off = {"fragranceOn": False, "fragranceDiffusing": False,
+                    "fragranceChannels": {c: False for c in CHANNELS}}
+        replies = self._fragrance_replies(["MIST OFF"], mist_off)
+        ok = any(str(r).strip() == "MIST OFF" for r in replies)
+        return {"ok": ok, "stopped_sequence": False, "command": "MIST OFF",
+                "error": None if ok else "아두이노가 MIST OFF 를 답하지 않았습니다"}
+
+    def _fragrance_replies(self, commands: list[str], state: dict) -> list:
+        self.log(f"  → 아두이노 {commands}")
+        body = json.dumps({"commands": commands, "state": state}).encode("utf-8")
+        req = urllib.request.Request(f"{self.fragrance_url}/api/fragrance/command", data=body,
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                res = json.loads(r.read().decode("utf-8"))
+            self.log(f"  ← sent={res.get('sent')} replies={res.get('replies')}")
+            return list(res.get("replies") or []) if res.get("sent") else []
+        except Exception as exc:  # noqa: BLE001
+            self.log(f"  ⚠ fragrance_bridge 연결 실패 {commands}: {exc!r}")
+            return []
 
     # ------------------------------------------------------------ 순서
     def _run(self, purify_sec: float, spray_sec: float, reason: str, go_around: bool) -> None:
@@ -100,20 +134,23 @@ class ArrivalSequence:
         try:
             self._set("purify", until=time.time() + purify_sec, reason=reason)
             self.log(f"① 청정 시작 {purify_sec:.0f}초 ({reason})")
-            self._fragrance(["ON000"], {"airPurifierOn": True, "fragranceOn": False,
+            self._fragrance(["FAN ON", "MIST OFF"], {"airPurifierOn": True, "fragranceOn": False,
                                         "fragranceDiffusing": False,
                                         "fragranceChannels": {c: False for c in CHANNELS}})
             if self._stop.wait(purify_sec):
                 return
 
             chosen = self._choose_channels()
-            digits = "".join("9" if c in chosen else "0" for c in CHANNELS)
-            cmd = ("ON" if self.purifier_during_spray else "OFF") + digits
+            # 동시 발향: 펌웨어(air_control 2.1)가 채널을 0.3초씩 늦춰 켜서 돌입 전류를 피하고,
+            # 켜진 채널은 끊김 없이 계속 분무한다.
+            fan_cmd = "FAN ON" if self.purifier_during_spray else "FAN OFF"
+            mist_cmd = "MIST ALL" if len(chosen) == len(CHANNELS) else "MIST " + "+".join(MIST_NAME[c] for c in chosen)
+            self.log(f"② 발향 {spray_sec:.0f}초 {chosen} → {fan_cmd}, {mist_cmd} (동시)")
+            self._fragrance([fan_cmd, mist_cmd], {"airPurifierOn": self.purifier_during_spray, "fragranceOn": True,
+                                                  "fragranceDiffusing": True,
+                                                  "fragranceChannels": {c: c in chosen for c in CHANNELS}})
+            # 첫 분무부터 spray_sec 를 센다
             self._set("spray", until=time.time() + spray_sec, reason=reason, scent=chosen)
-            self.log(f"② 발향 {spray_sec:.0f}초 {chosen} → {cmd}")
-            self._fragrance([cmd], {"airPurifierOn": self.purifier_during_spray, "fragranceOn": True,
-                                    "fragranceDiffusing": True,
-                                    "fragranceChannels": {c: c in chosen for c in CHANNELS}})
             name = WARD_NAME[chosen[0]] if len(chosen) == 1 else "mix"
             self._ward_cmd(f"SPRAY {int(round(spray_sec))} {name}")
             if self._stop.wait(spray_sec):
@@ -146,7 +183,7 @@ class ArrivalSequence:
 
     def _all_off(self, why: str) -> None:
         self.log(f"청정기·발향 전부 끔 ({why})")
-        self._fragrance(["OFF000"], {"airPurifierOn": False, "fragranceOn": False, "fragranceDiffusing": False,
+        self._fragrance(["FAN OFF", "MIST OFF"], {"airPurifierOn": False, "fragranceOn": False, "fragranceDiffusing": False,
                                      "fragranceChannels": {c: False for c in CHANNELS}})
 
     def _fragrance(self, commands: list[str], state: dict) -> bool:
@@ -164,6 +201,8 @@ class ArrivalSequence:
             return False
 
     def _choose_channels(self) -> list[str]:
+        if self.scent == "all":
+            return list(CHANNELS)
         if self.scent in CHANNELS:
             return [self.scent]
         try:

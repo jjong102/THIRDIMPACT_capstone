@@ -22,14 +22,14 @@ const PURIFY_DONE_TTS = "공기청정을 완료하였습니다.";
 const DONE_TTS = "발향청정을 완료하였습니다.";
 
 /**
- * main_opt 펌웨어: ON000/OFF000 = 2번 핀(공청 버튼, 상태 기억), M### = 미스트만.
- * 숫자 순서: 3번 페퍼민트(mint), 4번 라벤더(lavender), 5번 오렌지(orange)
+ * air_control 2.1 펌웨어: FAN ON / FAN OFF = 2번 핀(공청 버튼, 상태 기억), MIST … = 분무만.
+ * MNT = 3번 페퍼민트, LVD = 4번 라벤더, ORG = 5번 오렌지
  */
 /** 핀 순서대로 3번 → 4번 → 5번 */
 const SPRAY_STEPS = [
-  { command: "M900", pin: 3, label: "Peppermint" },
-  { command: "M090", pin: 4, label: "Lavender" },
-  { command: "M009", pin: 5, label: "Orange" },
+  { command: "MIST MNT", pin: 3, label: "Peppermint" },
+  { command: "MIST LVD", pin: 4, label: "Lavender" },
+  { command: "MIST ORG", pin: 5, label: "Orange" },
 ];
 
 const NO_CHANNELS = { mint: false, lavender: false, orange: false };
@@ -143,11 +143,11 @@ export default function useFoundingDemo({
     try {
       setPhaseSafe("purifying");
       const purifyStart = Date.now();
-      await sendChecked("ON000", { airPurifierOn: true }, alive);
+      await sendChecked("FAN ON", { airPurifierOn: true }, alive);
       await wait(PURIFY_MS - (Date.now() - purifyStart));
       if (!alive()) return;
 
-      await sendChecked("OFF000", { airPurifierOn: false }, alive);
+      await sendChecked("FAN OFF", { airPurifierOn: false }, alive);
       if (!alive()) return;
 
       await speakText(PURIFY_DONE_TTS);
@@ -160,12 +160,12 @@ export default function useFoundingDemo({
         if (index > 0) {
           // 이전 향을 먼저 끄고 잠깐 쉰 뒤 다음 향을 켠다.
           setSprayLabel("전환 대기");
-          await sendChecked("M000", { airPurifierOn: false }, alive);
+          await sendChecked("MIST OFF", { airPurifierOn: false }, alive);
           await wait(SWITCH_GAP_MS);
           if (!alive()) return;
         }
         setSprayLabel(`${step.pin}번 ${step.label}`);
-        // 공유 상태에 fragranceOn/채널을 올리면 다른 화면이 ON00x 를 자동 전송해
+        // 공유 상태에 fragranceOn/채널을 올리면 다른 화면이 분무 명령을 자동 전송해
         // 공청을 다시 켜고 미스트를 덮어쓰므로, 시퀀스 중에는 꺼짐 상태로 둔다.
         // 재전송으로 늦어져도 실제로 켜진 시점부터 SPRAY_MS 를 센다.
         await sendChecked(step.command, { airPurifierOn: false }, alive);
@@ -177,7 +177,7 @@ export default function useFoundingDemo({
       }
       if (!alive()) return;
 
-      await sendChecked("M000", { airPurifierOn: false }, alive);
+      await sendChecked("MIST OFF", { airPurifierOn: false }, alive);
       setSprayLabel(null);
       await speakText(DONE_TTS);
       if (alive()) setPhaseSafe("waiting");
@@ -211,7 +211,7 @@ export default function useFoundingDemo({
     setSprayLabel(null);
     setPhaseSafe("idle");
     if (wasBusy) {
-      void send(wasPurifying ? ["OFF000"] : ["M000"], {
+      void send(wasPurifying ? ["FAN OFF", "MIST OFF"] : ["MIST OFF"], {
         airPurifierOn: false,
       }).finally(() => setExternalControl?.(false));
     }

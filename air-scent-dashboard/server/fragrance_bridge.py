@@ -187,6 +187,9 @@ def apply_replies_to_state(replies: list[str]) -> dict:
     patch: dict = {}
     for line in replies:
         text = str(line)
+        if text.startswith("입력값"):
+            # `입력값: [FAN OFF]` 는 받은 명령을 되읽은 줄이지 결과가 아니다
+            continue
         if "FAN OFF" in text and "이미" not in text:
             patch["airPurifierOn"] = False
             continue
@@ -444,12 +447,27 @@ def _read_replies(port, wait_s: float = 1.0) -> list[str]:
     return replies
 
 
+COMMAND_LOG = os.environ.get("FRAGRANCE_COMMAND_LOG", "/tmp/fragrance_commands.log")
+
+
+def _log_command(line: str) -> None:
+    """아두이노로 간 명령·응답 기록 (서비스 로그가 저장되지 않아 원인 추적용)."""
+    try:
+        with open(COMMAND_LOG, "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%H:%M:%S')} {line}\n")
+    except OSError:
+        pass
+
+
 def _write_line(port, line: str) -> list[str]:
     text = line.strip()
     port.write(f"{text}\n".encode("utf-8"))
     port.flush()
     print(f"[fragrance-bridge] → {text}", file=sys.stderr)
-    return _read_replies(port, 3.6 if text.upper().startswith("OFF") else 1.0)
+    # air_control 2.1 은 청정기 버튼(2.5초)을 누르는 동안에도 바로 답한다 → 길게 기다리지 않는다
+    replies = _read_replies(port, 1.0)
+    _log_command(f"→ {text}  ← {replies}")
+    return replies
 
 
 def _apply_polarity(port) -> None:

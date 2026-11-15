@@ -778,6 +778,31 @@
   background: #2563eb;
   color: #ffffff;
   box-shadow: 0 6px 16px rgba(37, 99, 235, 0.35);
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+}
+
+.slam-nav-goal.dragging {
+  cursor: grabbing;
+  transform: translate(-50%, -50%) scale(1.15);
+  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.45);
+}
+
+/* 와드 이름표 */
+.slam-nav-goal-label {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.15);
   pointer-events: none;
 }
 
@@ -794,7 +819,7 @@
 
 .slam-pose-shaft {
   stroke: #84cc16;
-  stroke-width: 6;
+  stroke-width: 3.5;
   stroke-linecap: round;
 }
 
@@ -805,7 +830,7 @@
 .slam-pose-origin {
   fill: #ecfccb;
   stroke: #4d7c0f;
-  stroke-width: 2.5;
+  stroke-width: 2;
 }
 
 .slam-pose-arrow.dragging .slam-pose-shaft {
@@ -1543,7 +1568,7 @@
   right: 12px;
   bottom: 12px;
   z-index: 22;
-  width: min(340px, calc(100% - 24px));
+  width: min(420px, calc(100% - 24px));
   max-height: calc(100% - 24px);
   display: flex;
   flex-direction: column;
@@ -1807,4 +1832,119 @@
 .slam-go-btn.busy {
   opacity: 0.65;
   cursor: wait;
+}
+
+/* 주행 상태 버튼 + 바로 아래 위치 추정 버튼 (목표 설정 버튼은 ROS 로 옮겨 빠짐) */
+.slam-selected-actions .slam-launch-cell,
+.slam-selected-actions .slam-pose-under-launch {
+  grid-column: 1 / -1;
+}
+
+/* 지도 위 안내: 그리는 중 사용법 / 실패 메시지(5초)만 잠깐 */
+.slam-map-tools .slam-hint.slam-flash {
+  align-self: flex-start;
+  max-width: min(420px, 100%);
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.12);
+  white-space: normal;
+  pointer-events: none;
+}
+
+.slam-map-tools .slam-hint.slam-flash.warn {
+  color: #b91c1c;
+  background: #fef2f2;
+}
+
+/* 위치 제한 구역 · 한계 구역: 오른쪽 아래 패널 맨 아래 작은 버튼 */
+.slam-zone-mini {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.slam-zone-mini-btn {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(248, 250, 252, 0.92);
+  color: var(--text-sub);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 850;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.slam-zone-mini-btn.zone-region.active {
+  color: #c2410c;
+  background: #fff7ed;
+  border-color: #fdba74;
+}
+
+.slam-zone-mini-btn.zone-boundary.active {
+  color: #1d4ed8;
+  background: #eff6ff;
+  border-color: #93c5fd;
+}
+
+.slam-zone-mini-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 화살표를 보낸 뒤 로봇이 확정할 때까지: 위치 추정 중 (깜빡이지 않음) */
+.slam-pose-btn.pending {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  box-shadow: 0 8px 18px rgba(29, 78, 216, 0.28);
+}
+
+/* 위치 추정 일치율 (구역 버튼 왼쪽) */
+.slam-loc-match {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  margin-right: auto;
+  padding: 0 9px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 850;
+  white-space: nowrap;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.slam-loc-match.is-near {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: #b45309;
+}
+
+.slam-loc-match.is-ok {
+  border-color: #a7f3d0;
+  background: #ecfdf5;
+  color: #047857;
+}
+
+/* 아래 줄(일치율 + 구역 버튼)은 항상 한 줄. 좁으면 일치율 글자만 줄임표로 */
+.slam-zone-mini {
+  flex-wrap: nowrap;
+  align-items: center;
+  min-width: 0;
+}
+
+.slam-zone-mini-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.slam-loc-match {
+  min-width: 0;
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

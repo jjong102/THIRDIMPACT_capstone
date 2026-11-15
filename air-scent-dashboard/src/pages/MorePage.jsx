@@ -178,7 +178,7 @@ function describeSttStatus(payload) {
 function bedroomWard() {
   const wards = loadWards();
   return (
-    wards.find((ward) => wardDisplayName(ward) === "안방") ||
+    wards.find((ward) => wardDisplayName(ward) === "와드") ||
     wards.find((ward) => {
       const id = String(ward?.id ?? "")
         .toLowerCase()
@@ -254,6 +254,7 @@ function MorePage({
   fragranceOn = false,
   fragranceChannels = {},
   onToggleFragranceChannel,
+  onStopFragrance,
   mqttAirQuality = null,
   arduinoConnected = false,
   onReconnectArduino,
@@ -279,6 +280,48 @@ function MorePage({
   });
   const [sttBusy, setSttBusy] = useState(false);
   const [demoBusy, setDemoBusy] = useState(false);
+  /** 분무 시간 (11/15): 0 = 계속, 30·60 = 이 화면에서 켠 뒤 그 초가 지나면 자동으로 끔 */
+  const [sprayTimer, setSprayTimer] = useState(0);
+  const [sprayEndsAt, setSprayEndsAt] = useState(null);
+  const [sprayNow, setSprayNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!fragranceOn) setSprayEndsAt(null);
+  }, [fragranceOn]);
+
+  useEffect(() => {
+    if (!sprayEndsAt) return undefined;
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      setSprayNow(now);
+      if (now >= sprayEndsAt) {
+        setSprayEndsAt(null);
+        onStopFragrance?.();
+      }
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [sprayEndsAt, onStopFragrance]);
+
+  const sprayLeft = sprayEndsAt ? Math.max(0, Math.ceil((sprayEndsAt - sprayNow) / 1000)) : null;
+
+  const toggleChannelWithTimer = (channelId) => {
+    const turningOn = !(fragranceOn && fragranceChannels[channelId]);
+    onToggleFragranceChannel?.(channelId);
+    if (turningOn && sprayTimer > 0 && !sprayEndsAt) {
+      setSprayNow(Date.now());
+      setSprayEndsAt(Date.now() + sprayTimer * 1000);
+    }
+  };
+
+  const chooseSprayTimer = (seconds) => {
+    setSprayTimer(seconds);
+    if (seconds > 0 && fragranceOn) {
+      setSprayNow(Date.now());
+      setSprayEndsAt(Date.now() + seconds * 1000);
+    } else {
+      setSprayEndsAt(null);
+    }
+  };
   const [bedroomUnset, setBedroomUnset] = useState(isBedroomScentUnset);
 
   useEffect(() => {
@@ -747,7 +790,7 @@ function MorePage({
             </div>
             <div className="more-control-block">
               <p className="more-section-label">
-                향기{fragranceOn ? "" : " · 꺼짐"}
+                향기{fragranceOn ? (sprayLeft != null ? ` · ${sprayLeft}초 뒤 꺼짐` : "") : " · 꺼짐"}
               </p>
               <div className="more-air-status-grid" role="group" aria-label="향기 개별 전원">
                 {FRAGRANCE_CHANNELS.map((channel) => {
@@ -759,7 +802,7 @@ function MorePage({
                       type="button"
                       className={`more-air-status-btn more-fragrance-btn channel-${channel.id}${selected ? " selected" : ""}`}
                       aria-pressed={selected}
-                      onClick={() => onToggleFragranceChannel?.(channel.id)}
+                      onClick={() => toggleChannelWithTimer(channel.id)}
                     >
                       <span className="more-air-status-btn-icon" aria-hidden="true">
                         <span className="more-fragrance-dot" />
@@ -769,6 +812,27 @@ function MorePage({
                     </button>
                   );
                 })}
+              </div>
+              <div className="more-spray-timer" role="group" aria-label="분무 시간">
+                <span className="more-spray-timer-label">분무 시간</span>
+                {[
+                  { seconds: 0, label: "계속" },
+                  { seconds: 30, label: "30초" },
+                  { seconds: 60, label: "60초" },
+                ].map((option) => (
+                  <button
+                    key={option.seconds}
+                    type="button"
+                    className={`more-spray-timer-btn${sprayTimer === option.seconds ? " selected" : ""}`}
+                    aria-pressed={sprayTimer === option.seconds}
+                    onClick={() => chooseSprayTimer(option.seconds)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+                {sprayLeft != null ? (
+                  <span className="more-spray-timer-left">{sprayLeft}초 뒤 꺼짐</span>
+                ) : null}
               </div>
             </div>
             <div className="more-control-block">
@@ -922,7 +986,7 @@ function MorePage({
                 setBedroomUnset(true);
               }}
             >
-              {bedroomUnset ? "안방 향기 미설정됨" : "안방 향기 미설정"}
+              {bedroomUnset ? "와드 향기 미설정됨" : "와드 향기 미설정"}
             </button>
             {foundingDemo ? (
               <button

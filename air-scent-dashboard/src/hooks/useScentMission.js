@@ -131,7 +131,7 @@ export default function useScentMission({
       setFragranceDiffusing(false);
       setFragranceDispenseComplete(false);
       try {
-        await sendFragranceCommands(["ON000"], {
+        await sendFragranceCommands(["FAN ON", "MIST OFF"], {
           airPurifierOn: true,
           fragranceOn: false,
           fragranceDiffusing: false,

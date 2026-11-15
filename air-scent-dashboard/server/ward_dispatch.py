@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import collections
 import json
 import os
 import ssl
@@ -33,6 +34,12 @@ class WardDispatch:
         self._last_dispatch = 0.0
         self._lock = threading.Lock()
         self._client = None
+        # 화면 막대그래프용 최근 판정 (약 10초마다 1개 → 12개 ≈ 2분)
+        self._history: collections.deque = collections.deque(maxlen=12)
+
+    def history(self) -> list:
+        """최근 판정 (오래된 것 → 최신)."""
+        return list(self._history)
 
     def log(self, msg: str) -> None:
         line = f"{time.strftime('%H:%M:%S')} [ward-dispatch] {msg}"
@@ -83,13 +90,16 @@ class WardDispatch:
         except ValueError:
             return
         ward = str(d.get("device_id") or msg.topic.split("/")[1])
+        entry = {
+            "ward_id": ward, "state": d.get("state"), "label": d.get("label"),
+            "label_note": d.get("label_note"), "strength_pct": d.get("strength_pct"),
+            "votes": d.get("votes"), "n": d.get("n"),
+            "purifier": d.get("purifier"), "event": d.get("event"), "spraying": d.get("spraying"),
+            "uptime_s": d.get("uptime_s"), "batt_v": d.get("batt_v"), "batt_pct": d.get("batt_pct"),
+            "rx_time": time.time()}
+        self._history.append(entry)
         try:
-            self.merge_ui({"wardState": {
-                "ward_id": ward, "state": d.get("state"), "label": d.get("label"),
-                "label_note": d.get("label_note"), "strength_pct": d.get("strength_pct"),
-                "purifier": d.get("purifier"), "event": d.get("event"), "spraying": d.get("spraying"),
-                "uptime_s": d.get("uptime_s"), "batt_v": d.get("batt_v"), "batt_pct": d.get("batt_pct"),
-            "rx_time": time.time()}})
+            self.merge_ui({"wardState": entry})
         except Exception:  # noqa: BLE001
             pass
         if d.get("event") != "ON":

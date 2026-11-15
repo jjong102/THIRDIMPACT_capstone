@@ -338,3 +338,37 @@ body.map-expanded .app-header {
   color: #ffffff;
   background: linear-gradient(135deg, var(--purple), var(--blue));
 }
+
+
+/* 왼쪽 위 로봇 상태 색 */
+.header-icon-box.is-run {
+  color: #047857;
+  background: #ecfdf5;
+}
+
+.header-icon-box.is-scent {
+  color: #6d28d9;
+  background: #f5f3ff;
+}
+
+.header-icon-box.is-busy {
+  color: #0369a1;
+  background: #e0f2fe;
+  animation: header-robot-busy 1.2s ease-in-out infinite;
+}
+
+.header-icon-box.is-warn {
+  color: #b45309;
+  background: #fffbeb;
+}
+
+.header-icon-box.is-off {
+  color: #94a3b8;
+  background: #f1f5f9;
+}
+
+@keyframes header-robot-busy {
+  50% {
+    opacity: 0.55;
+  }
+}

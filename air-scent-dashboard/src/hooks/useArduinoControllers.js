@@ -14,7 +14,7 @@ import {
   getModeStepsToTarget,
   AIR_PURIFIER_MODE_COMMAND,
 } from "../utils/airPurifierCommand";
-import { buildFragranceCommand, buildMistDigits } from "../utils/fragranceCommand";
+import { buildFragranceCommand, buildMistCommand } from "../utils/fragranceCommand";
 import { clampTargetPercent } from "../utils/fragranceIntensity";
 
 const HEALTH_POLL_MS = 10000;
@@ -78,9 +78,19 @@ function normalizeSharedState(raw) {
   };
 }
 
+/** 보낸 줄 중 마지막 분무 명령. 없으면 fallback (청정기 명령이 분무 기록을 덮지 않게). */
+function lastMistLine(lines, fallback) {
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (String(lines[i]).startsWith("MIST ")) return String(lines[i]);
+  }
+  return fallback;
+}
+
 function applyFanStatusFromReplies(replies, setAirPurifierOn, setAirPurifierMode) {
   for (const line of replies) {
     const text = String(line);
+    // `입력값: [FAN OFF]` 는 받은 명령을 되읽은 줄이지 결과가 아니다
+    if (text.startsWith("입력값")) continue;
 
     if (text.includes("FAN OFF") && !text.includes("이미")) {
       setAirPurifierOn(false);
@@ -144,7 +154,7 @@ export default function useArduinoControllers({
     mistScale,
   });
   const commandQueueRef = useRef(Promise.resolve());
-  /** 창설시연 등 시퀀스가 직접 제어하는 동안 자동 전송(ON000 등)을 막는다. */
+  /** 창설시연 등 시퀀스가 직접 제어하는 동안 자동 전송(FAN·MIST 명령)을 막는다. */
   const externalControlRef = useRef(false);
   const [arduinoConnected, setArduinoConnected] = useState(false);
   const [hydrated, setHydrated] = useState(false);
@@ -295,7 +305,7 @@ export default function useArduinoControllers({
         );
         setArduinoConnected(Boolean(result.connected));
         if (result.connected) {
-          lastFragranceSentRef.current = String(lines[lines.length - 1] ?? "");
+          lastFragranceSentRef.current = lastMistLine(lines, lastFragranceSentRef.current);
         } else {
           lastFragranceSentRef.current = "";
         }
@@ -474,44 +484,28 @@ export default function useArduinoControllers({
     const { on } = airStatusRef.current;
     const { fragranceOn: mistOn, fragranceChannels: channels, fragranceBlend: blend } =
       fragranceStateRef.current;
-    const mistDigits = buildMistDigits({
-      fragranceOn: mistOn,
-      fragranceChannels: channels,
-      fragranceBlend: blend,
-      mistScale: mistScaleRef.current,
-    });
     const commands = [
-      on
-        ? mistDigits === "000"
-          ? buildAirOnCommand()
-          : `ON${mistDigits}`
-        : buildAirOffCommand(mistDigits),
+      on ? buildAirOnCommand() : buildAirOffCommand(),
+      buildMistCommand({
+        fragranceOn: mistOn,
+        fragranceChannels: channels,
+        fragranceBlend: blend,
+        mistScale: mistScaleRef.current,
+      }),
     ];
     enqueueCommands(commands, "air");
   }, [arduinoConnected, hydrated, enqueueCommands]);
 
   const toggleAirPurifier = useCallback(() => {
     const next = !airStatusRef.current.on;
-    const { fragranceOn: mistOn, fragranceChannels: channels, fragranceBlend: blend } =
-      fragranceStateRef.current;
-    const mistDigits = buildMistDigits({
-      fragranceOn: mistOn,
-      fragranceChannels: channels,
-      fragranceBlend: blend,
-      mistScale: mistScaleRef.current,
-    });
-    const command = next
-      ? mistDigits === "000"
-        ? buildAirOnCommand()
-        : `ON${mistDigits}`
-      : buildAirOffCommand(mistDigits);
+    // 청정기만 바꾼다. 분무는 건드리지 않는다.
+    const command = next ? buildAirOnCommand() : buildAirOffCommand();
 
     airStatusRef.current = {
       ...airStatusRef.current,
       on: next,
     };
     setAirPurifierOn(next);
-    lastFragranceSentRef.current = command;
     enqueueCommands([command], "air", { airPurifierOn: next });
   }, [enqueueCommands, setAirPurifierOn]);
 
@@ -529,15 +523,7 @@ export default function useArduinoControllers({
       const { on, mode } = airStatusRef.current;
       const commands = [];
       if (!on) {
-        const { fragranceOn: mistOn, fragranceChannels: channels, fragranceBlend: blend } =
-          fragranceStateRef.current;
-        const mistDigits = buildMistDigits({
-          fragranceOn: mistOn,
-          fragranceChannels: channels,
-          fragranceBlend: blend,
-          mistScale: mistScaleRef.current,
-        });
-        commands.push(mistDigits === "000" ? buildAirOnCommand() : `ON${mistDigits}`);
+        commands.push(buildAirOnCommand());
       }
       for (let i = 0; i < getModeStepsToTarget(mode, target); i++) {
         commands.push(AIR_PURIFIER_MODE_COMMAND);
@@ -671,7 +657,7 @@ export default function useArduinoControllers({
         setAirPurifierOn(stateOverrides.airPurifierOn);
       }
       const lines = (commands ?? []).filter(Boolean);
-      lastFragranceSentRef.current = String(lines[lines.length - 1] ?? "");
+      lastFragranceSentRef.current = lastMistLine(lines, lastFragranceSentRef.current);
       if (lines.length === 0) {
         return Promise.resolve(null);
       }

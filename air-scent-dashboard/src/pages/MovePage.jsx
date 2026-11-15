@@ -1,12 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Crosshair,
-  Move,
-  RefreshCw,
   Bot,
   LocateFixed,
   Wind,
-  House,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -41,9 +38,6 @@ import {
   sendInitialPose,
   sendNavGoal,
   cancelNavGoal,
-  publishImpactCommand,
-  saveTaughtZone,
-  startGoalTeach,
   yawFromRobotToMapPercent,
   yawToDisplayDeg,
 } from "../services/gdmMap";
@@ -51,10 +45,12 @@ import { getScentVisual, readingForWard, isKitchenWard } from "../utils/scentVis
 import useMoveUiSync from "../hooks/useMoveUiSync";
 import { fetchMoveUi, putMoveUi, stopSharedFragranceSpray } from "../services/moveUi";
 import { announceMoveTo, announceScentMission } from "../utils/robotAnnounce";
-import { scentLabel } from "../data/scentRecipes";
 import AiRecommendPage from "./AiRecommendPage";
 import MapScentPopover from "../components/MapScentPopover";
 import MapZoneOverlay from "../components/MapZoneOverlay";
+import RobotLaunchChip from "../components/RobotLaunchChip";
+import LocMatchChip from "../components/LocMatchChip";
+import WardScentPanel from "../components/WardScentPanel";
 import {
   captureScentReturnPose,
   clearScentReturn,
@@ -159,6 +155,9 @@ function runStageMorph(el, fromRect, toRect, fromRadius, toRadius, onDone) {
 }
 
 const GDM_SYNC_KEY = "air-scent-wards-gdm-synced";
+// 위치 추정 화살표 전체 길이(px, 머리 포함). 약 2cm.
+const POSE_ARROW_PX = 76;
+
 const SCENT_BURST_ANGLES = [0, 60, 120, 180, 240, 300];
 
 function MovePage({
@@ -269,7 +268,7 @@ function MovePage({
   const [isStopping, setIsStopping] = useState(false);
   const [sharedSpraying, setSharedSpraying] = useState(false);
   const [roomPolys, setRoomPolys] = useState([]);
-  const [gdmImporting, setGdmImporting] = useState(false);
+  const [, setGdmImporting] = useState(false);
   const [draggingId, setDraggingId] = useState(null);
   const dragRef = useRef(null);
   const [mapMeta, setMapMeta] = useState(null);
@@ -294,6 +293,10 @@ function MovePage({
   };
   const [navGoal, setNavGoal] = useState(null);
   const [poseDragging, setPoseDragging] = useState(false);
+  // 와드(목표 표시) 끌어 옮기기 — 화면 상태에만 저장, ROS 에는 안 보냄
+  const [goalDragging, setGoalDragging] = useState(false);
+  const [flashError, setFlashError] = useState(null);
+  const goalDragRef = useRef(null);
   const [poseEstimating, setPoseEstimating] = useState(false);
   const [locStatus, setLocStatus] = useState(null);
   const [missionPhase, setMissionPhase] = useState(null);
@@ -301,13 +304,16 @@ function MovePage({
   const [missionReady, setMissionReady] = useState(null);
   const [lastEvent, setLastEvent] = useState(null);
   const [localizationState, setLocalizationState] = useState(null);
-  const [posePending, setPosePending] = useState(false);
+  // 화살표를 로봇에 보냈는지. 보냈으면 버튼은 '완료'로 둔다 (로봇 검사 결과와 별개).
+  // 화살표를 보낸 시각. 로봇이 READY 를 보낼 때까지 '위치 추정 중'으로 둔다.
+  const [poseSentAt, setPoseSentAt] = useState(null);
+  const poseLockRef = useRef(false);
+  const autoSendPoseRef = useRef(null);
   const [goalStep, setGoalStep] = useState("idle");
-  const [goalBusy, setGoalBusy] = useState(false);
-  const [zoneKind, setZoneKind] = useState(null);
+  const [zoneKind] = useState(null);
   const [zoneBoxes, setZoneBoxes] = useState({ region: null, boundary: null });
   const [zoneDragging, setZoneDragging] = useState(false);
-  const [wardScents, setWardScents] = useState(loadWardScents);
+  const [, setWardScents] = useState(loadWardScents);
   const poseDragRef = useRef(null);
   const zoneDragRef = useRef(null);
   const destinationRef = useRef(null);
@@ -355,23 +361,41 @@ function MovePage({
     localizationState,
     setLocalizationState,
     draggingId,
-    poseDragging,
+    poseDragging: poseDragging || goalDragging,
+    poseLockRef,
   });
 
   useEffect(() => {
     if (!poseEstimating && dropPin) setDropPin(null);
   }, [poseEstimating, dropPin]);
 
+  // 보낸 화살표를 로봇이 확정하면 '완료'로
   useEffect(() => {
-    if (!posePending) return;
-    if (localizationState === "READY") {
-      setPosePending(false);
+    if (poseSentAt == null) return undefined;
+    const ready =
+      locStatus === "localized" ||
+      localizationState === "READY" ||
+      localizationState === "DEGRADED" ||
+      missionReady === true;
+    if (!ready) return undefined;
+    // 보내기 직전의 옛 READY 로 바로 끝나지 않게 2.5초는 기다린다
+    const wait = Math.max(0, 2500 - (Date.now() - poseSentAt));
+    const timer = window.setTimeout(() => {
+      setPoseSentAt(null);
       setMoveStatus("위치 추정 완료");
-    } else if (localizationState === "SEARCH_FAILED" || localizationState === "AMBIGUOUS") {
-      setPosePending(false);
-      setMoveStatus("위치 추정을 다시 해 주세요");
-    }
-  }, [localizationState, posePending]);
+    }, wait);
+    return () => window.clearTimeout(timer);
+  }, [poseSentAt, localizationState, locStatus, missionReady]);
+
+  // 실패 메시지만 5초 동안 지도 위에 띄운다
+  useEffect(() => {
+    const text = String(moveStatus || "");
+    if (!/실패|못했|못 했|오류|없음|꺼져/.test(text)) return undefined;
+    setFlashError(text);
+    const timer = window.setTimeout(() => setFlashError(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [moveStatus]);
+
 
   useEffect(() => {
     if (goalStep === "zones") return;
@@ -707,6 +731,57 @@ function MovePage({
     };
   }, [draggingId, moveWardToPointer, endWardDrag]);
 
+  const beginGoalDrag = (event) => {
+    if (poseEstimating || zoneKind || isMoving) return;
+    event.stopPropagation();
+    event.preventDefault();
+    goalDragRef.current = { pointerId: event.pointerId };
+    setGoalDragging(true);
+  };
+
+  useEffect(() => {
+    if (!goalDragging) return undefined;
+
+    const moveTo = (event) => {
+      const point = placePoint(event.clientX, event.clientY);
+      if (!point) return null;
+      return { x: Number(point.x.toFixed(1)), y: Number(point.y.toFixed(1)) };
+    };
+
+    const onMove = (event) => {
+      if (goalDragRef.current?.pointerId !== event.pointerId) return;
+      event.preventDefault();
+      const p = moveTo(event);
+      if (p) setNavGoal((prev) => ({ yaw: 0, ...(prev || {}), x: p.x, y: p.y }));
+    };
+
+    const onUp = (event) => {
+      if (goalDragRef.current?.pointerId !== event.pointerId) return;
+      goalDragRef.current = null;
+      setGoalDragging(false);
+      const p = event.type === "pointercancel" ? null : moveTo(event);
+      if (!p) return;
+      setNavGoal((prev) => ({ yaw: 0, ...(prev || {}), x: p.x, y: p.y }));
+      // 향기 효과·출동 표시가 와드를 따라오게 첫 집 위치도 같이 옮긴다
+      setWards((prev) => {
+        if (!prev.length) return prev;
+        const next = prev.map((ward, index) => (index === 0 ? { ...ward, x: p.x, y: p.y } : ward));
+        commitWards(next);
+        return next;
+      });
+      setMoveStatus("와드 위치를 옮겼습니다 (화면에만 저장)");
+    };
+
+    window.addEventListener("pointermove", onMove, { passive: false });
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, [goalDragging, placePoint, commitWards]);
+
   const updatePoseDrag = useCallback((clientX, clientY) => {
     const drag = poseDragRef.current;
     if (!drag) return;
@@ -725,9 +800,21 @@ function MovePage({
     });
   }, []);
 
-  const endPoseDrag = useCallback(() => {
+  const endPoseDrag = useCallback((event) => {
+    const drag = poseDragRef.current;
     poseDragRef.current = null;
     setPoseDragging(false);
+    if (!drag || !event || event.type === "pointercancel") return;
+
+    // 손을 떼면 그 화살표를 바로 로봇에 보낸다
+    const dx = event.clientX - drag.startClient.x;
+    const dy = event.clientY - drag.startClient.y;
+    const dragPx = Math.hypot(dx, dy);
+    const yaw =
+      dragPx < 16 ? drag.startYaw : screenDragToMapYaw(dx, dy, mapRotationRef.current);
+    const pin = { x: drag.start.x, y: drag.start.y, yaw, dragPx };
+    setDropPin(pin);
+    autoSendPoseRef.current?.(pin);
   }, []);
 
   useEffect(() => {
@@ -741,7 +828,7 @@ function MovePage({
 
     const onUp = (event) => {
       if (poseDragRef.current?.pointerId !== event.pointerId) return;
-      endPoseDrag();
+      endPoseDrag(event);
     };
 
     window.addEventListener("pointermove", onMove, { passive: false });
@@ -863,28 +950,6 @@ function MovePage({
     }
   };
 
-  const handleWardSelect = (wardId, event) => {
-    if (isMoving || poseEstimating || locStatus === "not_localized") return;
-    event.stopPropagation();
-    if (scentConversationOpen) return;
-
-    setSelectedId(wardId);
-    setDropPin(null);
-    if (mode === "select") {
-      setScentPanelWardId((current) => (current === wardId ? null : wardId));
-    }
-
-    // 위치 모드에서만 드래그로 이동
-    if (mode === "move") {
-      dragRef.current = { id: wardId, pointerId: event.pointerId };
-      setDraggingId(wardId);
-      try {
-        event.currentTarget.setPointerCapture?.(event.pointerId);
-      } catch {
-        /* ignore */
-      }
-    }
-  };
 
   const saveSelectedPin = () => {
     if (!selectedId || isMoving) return;
@@ -1008,7 +1073,8 @@ function MovePage({
           }
           return;
         }
-        setPosePending(true);
+        poseLockRef.current = false;
+        setPoseSentAt(Date.now());
         setMoveStatus("위치 추정 중");
         setPoseEstimating(false);
         setDropPin(null);
@@ -1027,6 +1093,10 @@ function MovePage({
     },
     [isMoving, isStopping, mapMeta]
   );
+  useEffect(() => {
+    autoSendPoseRef.current = (pin) =>
+      publishAtMapPercent("initial", pin.x, pin.y, "핀", Number(pin.yaw) || 0);
+  }, [publishAtMapPercent]);
 
   const startMove = () => {
     if (isMoving || isStopping || poseEstimating || manualControl) return;
@@ -1106,17 +1176,21 @@ function MovePage({
   }, [isStopping]);
 
   const beginPoseEstimate = useCallback(() => {
-    if (isMoving || isStopping || poseDragging) return;
+    // 로봇이 위치를 찾는 중이어도 언제든 다시 지정할 수 있다
+    if (isMoving || poseDragging) return;
     previousSelectedIdRef.current = selectedId;
+    poseLockRef.current = true;
+    setPoseSentAt(null);
     setPoseEstimating(true);
     setSelectedId(null);
     setDropPin(null);
     setMode("select");
     setMoveStatus("지도를 누른 채 드래그해 방향 화살표를 만드세요");
-  }, [isMoving, isStopping, poseDragging, selectedId]);
+  }, [isMoving, poseDragging, selectedId]);
 
   const cancelPoseEstimate = useCallback(() => {
     if (isMoving) return;
+    poseLockRef.current = false;
     poseDragRef.current = null;
     setPoseDragging(false);
     setPoseEstimating(false);
@@ -1140,131 +1214,25 @@ function MovePage({
     return true;
   }, [dropPin, isMoving, isStopping, poseDragging, publishAtMapPercent]);
 
-  const beginGoalSetup = useCallback(async () => {
-    if (goalBusy || goalStep === "launching") return;
-    setGoalBusy(true);
-    setGoalStep("launching");
-    setMoveStatus("목표 설정 모드로 전환 중");
-    try {
-      await startGoalTeach();
-      setGoalStep("save");
-      setMoveStatus("조이스틱으로 목표 위치에 세운 뒤 저장하세요");
-    } catch (error) {
-      setGoalStep("idle");
-      setMoveStatus(error?.message || "목표 설정 모드 전환 실패");
-    } finally {
-      setGoalBusy(false);
-    }
-  }, [goalBusy, goalStep]);
+  // 지도에 그려 정하는 구역 설정(위치 제한 구역·한계 구역)은 없앴다. 구역은 ROS 에서 정한다.
 
-  const saveGoalPose = useCallback(async () => {
-    if (goalBusy) return;
-    setGoalBusy(true);
-    setMoveStatus("목표 위치 저장 중");
-    try {
-      await publishImpactCommand("save_goal");
-    } catch (error) {
-      setMoveStatus(error?.message || "목표 위치 저장 실패");
-    } finally {
-      setGoalBusy(false);
-    }
-  }, [goalBusy]);
-
-  const commitZone = useCallback(async () => {
-    const box = zoneKind ? zoneBoxes[zoneKind] : null;
-    if (!zoneKind || !box || goalBusy) return;
-    const a = mapPercentToWorldMeters(box.x1, box.y1, mapMeta);
-    const b = mapPercentToWorldMeters(box.x2, box.y2, mapMeta);
-    if (!a || !b) {
-      setMoveStatus("지도 좌표를 계산하지 못했습니다");
-      return;
-    }
-    const width = Math.abs(b.x - a.x);
-    const height = Math.abs(b.y - a.y);
-    if (width < 0.3 || height < 0.3) {
-      setMoveStatus("구역을 더 크게 드래그하세요");
-      return;
-    }
-    setGoalBusy(true);
-    const zoneName = zoneKind === "region" ? "위치 제한 구역" : "한계 구역";
-    try {
-      const before = await fetchMoveUi();
-      const previousDetail = before?.robotDetail || "";
-      setMoveStatus(`${zoneName}을 주행 젯슨에 보내는 중`);
-      await saveTaughtZone({
-        kind: zoneKind,
-        x: (a.x + b.x) / 2,
-        y: (a.y + b.y) / 2,
-        yaw: 0,
-        width,
-        height,
-      });
-      let note = `${zoneName}을 주행 젯슨에 보냈습니다`;
-      for (let attempt = 0; attempt < 12; attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 400));
-        const state = await fetchMoveUi();
-        const detail = state?.robotDetail || "";
-        if (!detail || detail === previousDetail) continue;
-        if (detail.includes("저장") || detail.includes("구간") || detail.includes("포함") || detail.includes("목표")) {
-          note = detail;
-          break;
-        }
-      }
-      setMoveStatus(note);
-      setZoneKind(null);
-    } catch (error) {
-      setMoveStatus(error?.message || "구역 저장 실패");
-    } finally {
-      setGoalBusy(false);
-    }
-  }, [goalBusy, mapMeta, zoneBoxes, zoneKind]);
-
-  const onZoneButton = useCallback(
-    (kind) => {
-      if (zoneKind === kind) {
-        if (zoneBoxes[kind]) void commitZone();
-        else setMoveStatus("지도를 드래그해서 구역을 먼저 그리세요");
-        return;
-      }
-      setZoneKind(kind);
-      setMoveStatus(
-        kind === "region"
-          ? "지도를 드래그해서 위치 제한 구역을 그리세요"
-          : "지도를 드래그해서 한계 구역을 그리세요. 한계는 목표를 포함해야 합니다"
-      );
-    },
-    [commitZone, zoneBoxes, zoneKind]
-  );
-
-  const zoneButtonLabel = (kind) => {
-    if (zoneKind === kind && zoneBoxes[kind]) {
-      return kind === "region" ? "위치 제한 저장" : "한계 구역 저장";
-    }
-    return kind === "region" ? "위치 제한 구역" : "한계 구역";
-  };
-
-  const locatingNow = ["VERIFYING", "SEARCHING", "LOCAL_RECHECK"].includes(localizationState);
-  const poseBusy = posePending || locatingNow;
-  const poseDone =
-    !poseEstimating &&
-    !poseBusy &&
-    (localizationState === "READY" || locStatus === "localized");
+  // 로봇 기준 '위치 확정': READY·DEGRADED(로봇이 ready=true 로 주행) 또는 임무 가능
+  const robotLocalized =
+    locStatus === "localized" ||
+    localizationState === "READY" ||
+    localizationState === "DEGRADED" ||
+    missionReady === true;
+  // 보낸 뒤 로봇이 확정(READY)할 때까지는 '추정 중'. 중간의 SEARCHING↔FAILED 로 깜빡이지 않는다.
+  const posePendingLoc = !poseEstimating && poseSentAt != null;
+  const poseDone = !poseEstimating && !posePendingLoc && robotLocalized;
   const poseLabel = poseEstimating
-    ? "위치 추정 저장"
-    : poseBusy
+    ? "위치 지정 중"
+    : posePendingLoc
       ? "위치 추정 중"
       : poseDone
         ? "위치 추정 완료"
         : "위치 추정 하기";
-  const goalLabel =
-    goalStep === "launching"
-      ? "전환 중…"
-      : goalStep === "save"
-        ? "목표 위치 저장"
-        : goalStep === "zones"
-          ? "목표 저장됨"
-          : "목표 위치 설정";
-  const notLocalized = locStatus === "not_localized" && !poseDone;
+  const notLocalized = locStatus === "not_localized" && !robotLocalized;
   const notReady = missionReady === false;
   const goBlocked = notLocalized || notReady || manualControl;
   const modeHint = zoneKind
@@ -1273,7 +1241,7 @@ function MovePage({
       : "지도를 드래그해서 한계 구역을 그린 뒤 저장하세요. 한계는 목표를 포함해야 합니다"
     : poseEstimating
     ? dropPin
-      ? "위치 추정 저장을 누르면 이 화살표로 추정을 시작합니다"
+      ? "손을 떼면 바로 로봇에 보냅니다. 다시 그리면 다시 보냅니다"
       : "지도를 누른 채 드래그하면 방향 화살표가 생깁니다"
     : manualControl
       ? "조이스틱 수동 조작 중입니다"
@@ -1288,24 +1256,9 @@ function MovePage({
           move: "집을 드래그해 위치 수정",
         }[mode];
 
-  const placeLabel = manualControl
-    ? "수동"
-    : notLocalized
-      ? "위치 추정 필요"
-      : notReady
-        ? "준비 안 됨"
-        : liveRobotMap?.live
-          ? `${gdmPose.x_m?.toFixed?.(1) ?? "—"} m`
-          : "위치 없음";
-  const showMoveNote = Boolean(moveStatus && moveStatus !== "대기" && !poseEstimating);
-  const liveNote = showMoveNote ? moveStatus : lastEvent || "";
-  const showModeHint =
-    poseEstimating ||
-    Boolean(zoneKind) ||
-    notLocalized ||
-    notReady ||
-    manualControl ||
-    missionPhase === "setup";
+  // 그리는 중에만 사용법 한 줄
+  const drawingHint = poseEstimating || zoneKind ? modeHint : null;
+
 
   const selectedScreen = selectedWard
     ? mapPercentToContainer(selectedWard.x, selectedWard.y, mapLayout)
@@ -1332,6 +1285,11 @@ function MovePage({
   const navGoalScreen = navGoal
     ? mapPercentToContainer(navGoal.x, navGoal.y, mapLayout)
     : null;
+  // 와드 표시: 저장된 목표 위치, 없으면 첫 집 위치
+  const wardMarker = navGoal || (wards[0] ? { x: wards[0].x, y: wards[0].y, yaw: 0 } : null);
+  const wardMarkerScreen = wardMarker
+    ? mapPercentToContainer(wardMarker.x, wardMarker.y, mapLayout)
+    : null;
   const pathGoalScreen = isNavigating
     ? navGoalScreen || dropPinScreen || selectedScreen
     : null;
@@ -1352,10 +1310,8 @@ function MovePage({
       ? {
           cx: (dropPinScreen.x / 100) * mapLayout.containerW,
           cy: (dropPinScreen.y / 100) * mapLayout.containerH,
-          length: Math.max(
-            64,
-            Math.min(180, Number(dropPin.dragPx) || 72)
-          ),
+          // 길이는 약 1cm 로 고정. 드래그는 방향만 정한다.
+          length: POSE_ARROW_PX,
           deg: displayYawCss(dropPin.yaw ?? 0, mapLayout?.rotation),
         }
       : null;
@@ -1551,7 +1507,11 @@ function MovePage({
             </svg>
           )}
 
-          <MapZoneOverlay mapLayout={mapLayout} mapMeta={mapMeta} />
+          <MapZoneOverlay
+            mapLayout={mapLayout}
+            mapMeta={mapMeta}
+            setupMode={Boolean(zoneKind) || missionPhase === "setup"}
+          />
 
           {isNavigating && pathGoalScreen && robotScreen ? (
             <svg className="slam-path-svg" aria-hidden="true">
@@ -1583,25 +1543,25 @@ function MovePage({
               <defs>
                 <marker
                   id="slam-pose-head"
-                  markerWidth="8"
-                  markerHeight="8"
-                  refX="6"
-                  refY="4"
+                  markerWidth="4"
+                  markerHeight="4"
+                  refX="1"
+                  refY="2"
                   orient="auto"
                 >
-                  <path className="slam-pose-head" d="M0,0 L8,4 L0,8 Z" />
+                  <path className="slam-pose-head" d="M0,0 L4,2 L0,4 Z" />
                 </marker>
               </defs>
               <g
                 className={`slam-pose-arrow${poseDragging ? " dragging" : ""}`}
                 transform={`translate(${poseArrow.cx} ${poseArrow.cy}) rotate(${poseArrow.deg})`}
               >
-                <circle className="slam-pose-origin" r="8" />
+                <circle className="slam-pose-origin" r="5" />
                 <line
                   className="slam-pose-shaft"
-                  x1="10"
+                  x1="6"
                   y1="0"
-                  x2={poseArrow.length}
+                  x2={poseArrow.length - 9}
                   y2="0"
                   markerEnd="url(#slam-pose-head)"
                 />
@@ -1609,13 +1569,15 @@ function MovePage({
             </svg>
           ) : null}
 
-          {navGoalScreen && !dropPinScreen ? (
+          {wardMarkerScreen && !dropPinScreen ? (
             <div
-              className="slam-nav-goal"
-              style={{ left: `${navGoalScreen.x}%`, top: `${navGoalScreen.y}%` }}
-              title="Nav2 목표"
+              className={`slam-nav-goal${goalDragging ? " dragging" : ""}`}
+              style={{ left: `${wardMarkerScreen.x}%`, top: `${wardMarkerScreen.y}%` }}
+              title="와드 (끌어서 옮기기 · 화면에만 저장)"
+              onPointerDown={beginGoalDrag}
             >
               <Crosshair size={16} strokeWidth={2.6} />
+              <span className="slam-nav-goal-label">와드</span>
             </div>
           ) : null}
           {robotScreen ? (
@@ -1647,29 +1609,21 @@ function MovePage({
             </div>
           ) : null}
 
+          {/* 집(안방) 핀은 없앴다. 와드 자리에 발향 효과만 남긴다. */}
           {wards.map((ward) => {
-            const active = ward.id === selectedId;
             const screen = mapPercentToContainer(ward.x, ward.y, mapLayout);
             const visual = wardVisuals[ward.id];
             const hasScent =
               visual &&
               visual.tone !== "waiting" &&
               visual.tone !== "offline";
-            const scentUnset = Boolean(wardScents?.[ward.id]?.unset);
-            const scentName = scentUnset
-              ? "향기미설정"
-              : scentLabel(
-                  wardScents?.[ward.id]?.fragrance || data?.currentFragrance || ""
-                );
+            if (!hasScent) return null;
             return (
               <div
                 key={ward.id}
                 className="slam-ward-wrap"
                 style={{ left: `${screen.x}%`, top: `${screen.y}%` }}
               >
-                <span className="slam-ward-point" aria-hidden="true">
-                  <i />
-                </span>
 
                 {hasScent && (
                   <div
@@ -1702,36 +1656,6 @@ function MovePage({
                   </div>
                 )}
 
-                <button
-                  type="button"
-                  data-ward-anchor={ward.id}
-                  className={`slam-ward ${active ? "selected" : ""} ${mode === "move" && !poseEstimating ? "movable" : ""} ${draggingId === ward.id ? "dragging" : ""} ${
-                    active && selectedPinDirty ? "dirty" : ""
-                  }`}
-                  onPointerDown={(event) => handleWardSelect(ward.id, event)}
-                  disabled={isMoving || poseEstimating || notLocalized}
-                  aria-label={`${wardDisplayName(ward)}${scentName ? ` ${scentName}` : ""} 위치`}
-                  aria-pressed={active}
-                >
-                  <span className="slam-ward-pin" aria-hidden="true">
-                    <span className="slam-ward-pin-head">
-                      {hasScent ? (
-                        <span className="slam-ward-emoji">{visual.emoji}</span>
-                      ) : (
-                        <House size={active ? 20 : 18} strokeWidth={2.4} />
-                      )}
-                    </span>
-                    <span className="slam-ward-pin-tip" />
-                  </span>
-                  <span className="slam-ward-label">
-                    {wardDisplayName(ward)}
-                    {scentName ? (
-                      <em className={`slam-ward-scent${scentUnset ? " is-unset" : ""}`}>
-                        · {scentName}
-                      </em>
-                    ) : null}
-                  </span>
-                </button>
               </div>
             );
           })}
@@ -1840,7 +1764,7 @@ function MovePage({
                   disabled={isMoving || isStopping || poseDragging || !dropPin}
                 >
                   <Check size={18} />
-                  {isMoving ? "전송 중…" : "위치 추정 저장"}
+                  {isMoving ? "전송 중…" : "다시 보내기"}
                 </button>
                 {scentSpraying ? (
                   <button
@@ -1909,32 +1833,14 @@ function MovePage({
               </p>
 
               <div className={`slam-selected-actions dual-pose with-goal${scentSpraying ? " with-stop" : ""}`}>
+                <RobotLaunchChip className="slam-launch-cell" />
                 <button
                   type="button"
-                  className={`slam-pose-btn${poseDone ? " done" : ""}${poseBusy ? " busy" : ""}${!poseDone && !poseBusy ? " needed" : ""}`}
-                  onClick={() => {
-                    if (poseBusy) return;
-                    beginPoseEstimate();
-                  }}
-                  disabled={isMoving || isStopping || poseBusy}
+                  className={`slam-pose-btn slam-pose-under-launch${poseDone ? " done" : posePendingLoc ? " pending" : " needed"}`}
+                  onClick={beginPoseEstimate}
                 >
                   <LocateFixed size={18} />
                   {poseLabel}
-                </button>
-                <button
-                  type="button"
-                  className={`slam-goal-btn${goalStep === "zones" ? " done" : ""}${goalBusy ? " busy" : ""}`}
-                  onClick={() => {
-                    if (goalStep === "save") {
-                      void saveGoalPose();
-                      return;
-                    }
-                    if (goalStep === "idle") void beginGoalSetup();
-                  }}
-                  disabled={goalBusy || goalStep === "launching" || goalStep === "zones" || poseEstimating}
-                >
-                  <Crosshair size={18} />
-                  {goalBusy && goalStep !== "zones" ? "처리 중…" : goalLabel}
                 </button>
                 {showGoButton ? (
                 <button
@@ -1973,123 +1879,22 @@ function MovePage({
                   </button>
                 ) : null}
               </div>
+              <div className="slam-zone-mini">
+                <LocMatchChip />
+              </div>
             </>
           )}
         </div>
+
+          <div className="ward-scent-anchor" onPointerDown={(event) => event.stopPropagation()}>
+            <WardScentPanel />
+          </div>
 
           <div
             className="slam-map-tools"
             onPointerDown={(event) => event.stopPropagation()}
           >
             <div className="slam-map-tools-row">
-              {placeLabel !== "위치 없음" ? (
-                <div
-                  className={`slam-live-chip${notLocalized || !robotScreen ? " warn" : ""}`}
-                  title={
-                    robotMap.map?.name
-                      ? `주행 맵 · ${robotMap.map.name}`
-                      : gdmStatus.map
-                        ? `GDM · ${gdmStatus.map}`
-                        : "SLAM 지도"
-                  }
-                >
-                  <span className="slam-live-dot" aria-hidden="true" />
-                  <span>{placeLabel}</span>
-                  {liveNote ? (
-                    <span className="slam-live-note">{liveNote}</span>
-                  ) : null}
-                </div>
-              ) : null}
-              <button
-                type="button"
-                className="slam-mode-btn"
-                onClick={() => importGdmRooms()}
-                disabled={gdmImporting || Boolean(robotMap.meta)}
-                title={
-                  robotMap.meta
-                    ? "주행 맵에는 GDM 방 윤곽이 없습니다"
-                    : "GDM 방 윤곽을 갱신합니다 (저장한 핀 위치는 유지)"
-                }
-              >
-                <RefreshCw size={16} className={gdmImporting ? "spin" : ""} />
-                GDM 방 불러오기
-              </button>
-              {missionPhase === "setup" ? (
-                <div className="slam-mode-group" role="group" aria-label="설정 저장">
-                  <button
-                    type="button"
-                    className="slam-mode-btn"
-                    onClick={() => {
-                      setMoveStatus("목표 저장");
-                      void publishImpactCommand("save_goal").catch((error) => {
-                        setMoveStatus(error?.message || "목표 저장 실패");
-                      });
-                    }}
-                  >
-                    목표 저장
-                  </button>
-                  <button
-                    type="button"
-                    className="slam-mode-btn"
-                    onClick={() => {
-                      setMoveStatus("한계 저장");
-                      void publishImpactCommand("save_boundary").catch((error) => {
-                        setMoveStatus(error?.message || "한계 저장 실패");
-                      });
-                    }}
-                  >
-                    한계 저장
-                  </button>
-                  <button
-                    type="button"
-                    className="slam-mode-btn"
-                    onClick={() => {
-                      setMoveStatus("정찰 구간 저장");
-                      void publishImpactCommand("save_region").catch((error) => {
-                        setMoveStatus(error?.message || "정찰 구간 저장 실패");
-                      });
-                    }}
-                  >
-                    정찰 구간 저장
-                  </button>
-                </div>
-              ) : null}
-              <div className="slam-mode-group" role="tablist" aria-label="지도 모드">
-                <button
-                  type="button"
-                  className={`slam-mode-btn ${mode === "select" ? "active" : ""}`}
-                  onClick={() => setMode("select")}
-                  disabled={isMoving || poseEstimating || notLocalized}
-                >
-                  <Crosshair size={16} />
-                  선택
-                </button>
-                <button
-                  type="button"
-                  className={`slam-mode-btn ${mode === "move" ? "active" : ""}`}
-                  onClick={() => setMode("move")}
-                  disabled={isMoving || poseEstimating || notLocalized}
-                >
-                  <Move size={16} />
-                  위치
-                </button>
-                <button
-                  type="button"
-                  className={`slam-mode-btn zone-region${zoneKind === "region" ? " active" : ""}`}
-                  onClick={() => onZoneButton("region")}
-                  disabled={goalBusy || poseEstimating}
-                >
-                  {zoneButtonLabel("region")}
-                </button>
-                <button
-                  type="button"
-                  className={`slam-mode-btn zone-boundary${zoneKind === "boundary" ? " active" : ""}`}
-                  onClick={() => onZoneButton("boundary")}
-                  disabled={goalBusy || poseEstimating}
-                >
-                  {zoneButtonLabel("boundary")}
-                </button>
-              </div>
               <button
                 type="button"
                 className="slam-fullscreen-btn"
@@ -2110,16 +1915,11 @@ function MovePage({
                 </span>
               </button>
             </div>
-            {!robotScreen ? (
-              <p className="slam-pose-missing" aria-live="polite">
-                <LocateFixed size={16} strokeWidth={2.4} />
-                <span>로봇 위치를 받지 못했습니다</span>
-              </p>
-            ) : null}
-            {showModeHint ? (
-              <p className={`slam-hint${notLocalized && !poseEstimating ? " warn" : ""}`}>
-                {modeHint}
-              </p>
+            {/* 상태는 맨 위 상태창이 보여 준다. 여기는 그리는 중 사용법·실패만 잠깐. */}
+            {drawingHint ? (
+              <p className="slam-hint slam-flash">{drawingHint}</p>
+            ) : flashError ? (
+              <p className="slam-hint slam-flash warn" role="alert">{flashError}</p>
             ) : null}
           </div>
         </div>

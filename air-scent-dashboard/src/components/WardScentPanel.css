@@ -1,0 +1,185 @@
+/* 지도 왼쪽 아래: 와드 냄새 판정 (세기 % 가로 막대) */
+.ward-scent-panel {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 21;
+  width: min(330px, calc(100% - 24px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  /* 오른쪽 아래 패널(.slam-destination)과 같은 반투명 유리 */
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(6px) saturate(1.25);
+  -webkit-backdrop-filter: blur(6px) saturate(1.25);
+  box-shadow:
+    0 14px 32px rgba(15, 23, 42, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  color: #0f172a;
+  pointer-events: auto;
+}
+
+.ward-scent-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ward-scent-head strong {
+  margin-right: auto;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.ward-status {
+  padding: 3px 10px;
+  backdrop-filter: blur(4px);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.ward-status.is-ok {
+  color: #047857;
+  background: #ecfdf5;
+}
+
+.ward-status.is-scent {
+  color: #6d28d9;
+  background: #f5f3ff;
+}
+
+.ward-status.is-bad {
+  color: #b91c1c;
+  background: #fef2f2;
+}
+
+.ward-status.is-off {
+  color: #64748b;
+  background: #f1f5f9;
+}
+
+.ward-scent-now-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.ward-scent-name {
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.ward-scent-pct {
+  font-size: 20px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+.ward-scent-now .ward-bar-track {
+  height: 10px;
+  border-radius: 5px;
+}
+
+.ward-scent-spray,
+.ward-scent-empty {
+  margin: 6px 0 0;
+  font-size: 12px;
+  font-weight: 750;
+  color: #475569;
+}
+
+/* 막대: 흐린 트랙 + 4px 둥근 끝 */
+.ward-bar-track {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(148, 163, 184, 0.22);
+  overflow: hidden;
+}
+
+.ward-bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+
+.ward-bar-fill.tone-mint {
+  background: #0f9f6e;
+}
+
+.ward-bar-fill.tone-lavender {
+  background: #7c5cdb;
+}
+
+.ward-bar-fill.tone-orange {
+  background: #e8730c;
+}
+
+.ward-bar-fill.tone-odor {
+  background: #b4232c;
+}
+
+.ward-bar-fill.tone-fresh {
+  background: #94a3b8;
+}
+
+/* 제목 줄 배터리 (11/15) */
+.ward-batt {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 850;
+  color: #334155;
+  background: rgba(241, 245, 249, 0.85);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.ward-batt-icon {
+  position: relative;
+  width: 18px;
+  height: 9px;
+  padding: 1px;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+  box-sizing: content-box;
+}
+
+.ward-batt-icon::after {
+  content: "";
+  position: absolute;
+  right: -4px;
+  top: 2px;
+  width: 2px;
+  height: 5px;
+  border-radius: 0 1px 1px 0;
+  background: currentColor;
+}
+
+.ward-batt-level {
+  display: block;
+  height: 100%;
+  border-radius: 1px;
+  background: #10b981;
+}
+
+.ward-batt.is-low {
+  color: #b91c1c;
+  background: #fef2f2;
+}
+
+.ward-batt.is-low .ward-batt-level {
+  background: #ef4444;
+}

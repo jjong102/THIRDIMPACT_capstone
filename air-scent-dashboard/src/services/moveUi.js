@@ -45,8 +45,16 @@ export async function stopSharedFragranceSpray() {
     // keep trying the Arduino off command
   }
 
+  // 서버가 멈춘다: 도착 후 청정·발향 순서가 돌면 그 순서를 멈추고 전부 끄고, 아니면 분무만 끈다
   try {
-    await sendFragranceCommands(["M000"], {
+    const response = await fetch(`${API_BASE}/api/nav/fragrance/stop`, { method: "POST" });
+    if (response.ok) return;
+  } catch {
+    // 아래에서 아두이노에 직접 보낸다
+  }
+
+  try {
+    await sendFragranceCommands(["MIST OFF"], {
       fragranceOn: false,
       fragranceDiffusing: false,
       fragranceChannels: { mint: false, lavender: false, orange: false },

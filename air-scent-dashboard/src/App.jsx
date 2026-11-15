@@ -426,6 +426,7 @@ function App() {
             fragranceOn={fragranceOn}
             fragranceChannels={fragranceChannels}
             onToggleFragranceChannel={toggleFragranceChannel}
+            onStopFragrance={stopFragrance}
             mqttAirQuality={mqttAirQuality}
             arduinoConnected={arduinoConnected}
             onReconnectArduino={reconnectArduino}
