@@ -146,8 +146,19 @@ def build_user_prompt(payload: dict) -> str:
     )
 
 
+def _is_local_llm() -> bool:
+    host = NIM_BASE_URL.lower()
+    return host.startswith(
+        ("http://127.0.0.1", "http://localhost", "https://127.0.0.1", "https://localhost")
+    )
+
+
+def _llm_ready() -> bool:
+    return bool(NVIDIA_API_KEY) or _is_local_llm()
+
+
 def extract_json(text: str) -> dict:
-    text = text.strip()
+    text = re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.IGNORECASE).strip()
     fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
     if fence:
         text = fence.group(1).strip()
@@ -161,7 +172,37 @@ def extract_json(text: str) -> dict:
         return json.loads(match.group(0))
 
 
+def _call_local_chat(messages: list[dict]) -> str:
+    root = NIM_BASE_URL.removesuffix("/v1").rstrip("/")
+    body = json.dumps(
+        {
+            "model": NIM_MODEL,
+            "messages": messages,
+            "think": False,
+            "stream": False,
+            "options": {
+                "temperature": 0.3,
+                "num_ctx": 2048,
+                "num_predict": 256,
+            },
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        f"{root}/api/chat",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=120) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    message = payload.get("message") or {}
+    return message.get("content") or ""
+
+
 def call_nim_chat(messages: list[dict]) -> str:
+    if _is_local_llm():
+        return _call_local_chat(messages)
+
     if not NVIDIA_API_KEY:
         raise RuntimeError("NVIDIA_API_KEY 환경 변수가 설정되지 않았습니다.")
 
@@ -372,7 +413,7 @@ def normalize_recommendation(raw: dict) -> dict:
 
 
 def recommend(payload: dict) -> dict:
-    if not NVIDIA_API_KEY:
+    if not _llm_ready():
         return normalize_recommendation(mock_recommendation(payload))
 
     recipes = load_recipes()
@@ -387,7 +428,7 @@ def recommend(payload: dict) -> dict:
     try:
         content = call_nim_chat(messages)
         parsed = extract_json(content)
-        parsed["source"] = "nim"
+        parsed["source"] = "local" if _is_local_llm() else "nim"
         result = prefer_speech_recipe(payload, normalize_recommendation(parsed))
         blocked = _blocked_recipe_ids(payload)
         if result["recipe_id"] in blocked and infer_recipe_from_speech(_user_spoken(payload)) is None:
@@ -593,8 +634,9 @@ class LlmBridgeHandler(BaseHTTPRequestHandler):
                 200,
                 {
                     "ok": True,
-                    "nimConfigured": bool(NVIDIA_API_KEY),
+                    "nimConfigured": _llm_ready(),
                     "model": NIM_MODEL,
+                    "backend": "local" if _is_local_llm() else "nim",
                     "mqttConnected": mqtt_connected,
                     "mqttTopic": MQTT_CONTROL_TOPIC,
                     "mqttError": mqtt_error,
@@ -675,7 +717,7 @@ def main() -> None:
 
     server = ThreadingHTTPServer(("127.0.0.1", PORT), LlmBridgeHandler)
     print(
-        f"[llm-bridge] http://127.0.0.1:{PORT} (NIM: {NIM_MODEL}, key={'set' if NVIDIA_API_KEY else 'mock'})",
+        f"[llm-bridge] http://127.0.0.1:{PORT} ({'local' if _is_local_llm() else 'NIM'}: {NIM_MODEL}, key={'set' if NVIDIA_API_KEY else 'mock'})",
         file=sys.stderr,
     )
     server.serve_forever()

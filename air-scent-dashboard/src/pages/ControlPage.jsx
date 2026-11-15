@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Fan,
   SprayCan,
-  Sparkles,
   Moon,
   Heart,
   House,
@@ -33,7 +32,7 @@ import {
 } from "../utils/fragranceIntensity";
 import useSharedWards from "../hooks/useSharedWards";
 import useScentMissionNav, {
-  isNotLocalized,
+  missionBlockReason,
   isScentMissionTo,
 } from "../hooks/useScentMissionNav";
 import "./FragrancePage.css";
@@ -135,7 +134,8 @@ function ControlPage({
   const goingToSelected = Boolean(
     selectedWard && isScentMissionTo(navUi, selectedWard.id)
   );
-  const notLocalized = isNotLocalized(navUi.locStatus);
+  const blockReason = missionBlockReason(navUi);
+  const notLocalized = Boolean(blockReason);
 
   useEffect(() => {
     if (!selectedWardId) return;
@@ -314,7 +314,7 @@ function ControlPage({
 
               {wards.length === 0 ? (
                 <p className="control-location-empty">
-                  이동 탭에서 집 위치를 설정해 주세요
+                  홈 탭에서 집 위치를 설정해 주세요
                 </p>
               ) : (
                 <div
@@ -362,26 +362,6 @@ function ControlPage({
                 </div>
               )}
 
-              <div className="control-scent-actions">
-                <button
-                  type="button"
-                  className="control-scent-action blend"
-                  disabled={!selectedWard}
-                  onClick={() => setView("blend")}
-                >
-                  <SprayCan size={16} />
-                  <span>향기 선택</span>
-                </button>
-                <button
-                  type="button"
-                  className="control-scent-action ai"
-                  disabled={!selectedWard}
-                  onClick={() => setView("ai")}
-                >
-                  <Sparkles size={16} />
-                  <span>AI 추천받기</span>
-                </button>
-              </div>
             </div>
 
             <p className="control-blend-summary">
@@ -401,7 +381,7 @@ function ControlPage({
               onClick={() => void startScentMission(selectedWard)}
               title={
                 notLocalized && !goingToSelected
-                  ? "위치 추정이 필요합니다"
+                  ? blockReason
                   : undefined
               }
               disabled={

@@ -8,6 +8,7 @@ import { ttsBridgePlugin } from './vite.ttsBridge.js'
 import { gdmBridgePlugin } from './vite.gdmBridge.js'
 import { rosNavBridgePlugin } from './vite.rosNavBridge.js'
 import { systemBridgePlugin } from './vite.systemBridge.js'
+import { mapsBridgePlugin } from './vite.mapsBridge.js'
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
@@ -29,6 +30,7 @@ export default defineConfig(({ mode }) => {
       gdmBridgePlugin(),
       rosNavBridgePlugin(),
       systemBridgePlugin(),
+      mapsBridgePlugin(),
     ],
     server: {
       host: true,

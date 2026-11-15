@@ -65,6 +65,61 @@ function wifiAddresses(addresses) {
   return (addresses ?? []).filter((ip) => ip.startsWith(WIFI_IP_PREFIX));
 }
 
+function wifiLevel(dbm) {
+  if (typeof dbm !== "number" || Number.isNaN(dbm)) return 0;
+  if (dbm >= -60) return 3;
+  if (dbm >= -70) return 2;
+  if (dbm >= -80) return 1;
+  return 0;
+}
+
+async function readWifiStatus() {
+  const empty = {
+    ok: true,
+    connected: false,
+    iface: null,
+    ssid: null,
+    dbm: null,
+    level: 0,
+  };
+
+  let listing = "";
+  try {
+    listing = await readStdout("iw", ["dev"]);
+  } catch {
+    return empty;
+  }
+
+  const ifaces = [];
+  for (const line of listing.split("\n")) {
+    const match = line.match(/Interface\s+(\S+)/);
+    if (match && !match[1].startsWith("p2p")) ifaces.push(match[1]);
+  }
+
+  for (const iface of ifaces) {
+    let link = "";
+    try {
+      link = await readStdout("iw", ["dev", iface, "link"]);
+    } catch {
+      continue;
+    }
+    if (!/Connected to/i.test(link)) continue;
+    const ssid = link.match(/^\s*SSID:\s*(.+)$/m)?.[1]?.trim() || null;
+    const dbmRaw = link.match(/signal:\s*(-?\d+)\s*dBm/i)?.[1];
+    const dbm = dbmRaw == null ? null : Number(dbmRaw);
+    return {
+      ok: true,
+      connected: true,
+      iface,
+      ssid,
+      dbm,
+      level: wifiLevel(dbm),
+    };
+  }
+
+  return empty;
+}
+
 function fetchRobotIdentity(ip) {
   return new Promise((resolve, reject) => {
     const req = httpRequest(
@@ -295,6 +350,22 @@ export function systemBridgePlugin() {
         }
 
         const action = url.replace("/api/system/", "");
+
+        if (req.method === "GET" && action === "wifi") {
+          readWifiStatus()
+            .then((status) => {
+              sendJson(res, 200, status);
+            })
+            .catch((error) => {
+              console.error("[system-bridge] Wi-Fi 조회 실패:", error.message);
+              sendJson(res, 500, {
+                ok: false,
+                connected: false,
+                error: "Wi-Fi 상태를 읽지 못했습니다",
+              });
+            });
+          return;
+        }
 
         if (req.method === "GET" && (action === "ip" || action === "hosts")) {
           readHosts()

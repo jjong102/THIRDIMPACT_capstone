@@ -6,12 +6,11 @@ export const WARDS_STORAGE_KEY = "air-scent-wards";
 export const WARD_SCENTS_STORAGE_KEY = "air-scent-ward-scents";
 export const HOME_SCENT_WARDS_KEY = "air-scent-home-scent-wards";
 export const SELECTED_WARD_ID_KEY = "air-scent-selected-ward";
-export const MAX_HOME_SCENT_WARDS = 2;
-export const MAX_WARDS = 2;
+export const MAX_HOME_SCENT_WARDS = 1;
+export const MAX_WARDS = 1;
 
 export const DEFAULT_WARDS = [
-  { id: "ward-home-1", name: "거실", x: 28, y: 48 },
-  { id: "ward-home-2", name: "주방", x: 72, y: 48 },
+  { id: "ward-home-1", name: "와드", x: 28, y: 48 },
 ];
 
 export const FRAGRANCE_PRESETS = [
@@ -42,18 +41,19 @@ export function defaultWardScent() {
 }
 
 const ROOM_DISPLAY_BY_ID = {
-  room_1: "거실",
-  room1: "거실",
-  ward_home_1: "거실",
+  room_1: "와드",
+  room1: "와드",
+  ward_home_1: "와드",
   room_2: "주방",
   room2: "주방",
   ward_home_2: "주방",
 };
 
 const ROOM_DISPLAY_BY_NAME = {
-  room1: "거실",
-  room_1: "거실",
-  "302호": "거실",
+  room1: "와드",
+  room_1: "와드",
+  "302호": "와드",
+  "거실": "와드",
   room2: "주방",
   room_2: "주방",
   "집2": "주방",
@@ -144,6 +144,18 @@ export function saveSelectedWardId(id) {
     // ignore
   }
   return id;
+}
+
+export function clearWardScent(wardId) {
+  if (!wardId) {
+    return loadWardScents();
+  }
+  const next = {
+    ...loadWardScents(),
+    [wardId]: { unset: true },
+  };
+  saveWardScents(next);
+  return next;
 }
 
 export function persistWardScent(wardId, patch) {

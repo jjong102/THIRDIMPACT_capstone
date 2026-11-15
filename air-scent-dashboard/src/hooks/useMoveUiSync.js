@@ -74,8 +74,20 @@ export default function useMoveUiSync({
   setPoseEstimating,
   locStatus,
   setLocStatus,
+  missionPhase,
+  setMissionPhase,
+  manualControl,
+  setManualControl,
+  missionReady,
+  setMissionReady,
+  lastEvent,
+  setLastEvent,
+  localizationState,
+  setLocalizationState,
   draggingId,
   poseDragging,
+  // 이 화면에서 위치 지정 중이면 true. 그동안은 서버의 옛 상태가 화살표 화면을 덮지 않게 한다.
+  poseLockRef,
 }) {
   const lastRevRef = useRef(-1);
   const applyingRemoteRef = useRef(false);
@@ -91,6 +103,11 @@ export default function useMoveUiSync({
     mode,
     poseEstimating,
     locStatus,
+    missionPhase,
+    manualControl,
+    missionReady,
+    lastEvent,
+    localizationState,
   };
 
   const rememberRev = useCallback((state) => {
@@ -117,14 +134,17 @@ export default function useMoveUiSync({
         setSavedWards(snapshot);
       }
 
-      const nextPoseEstimating = Boolean(raw.poseEstimating);
+      const poseLocked = Boolean(poseLockRef?.current);
+      const nextPoseEstimating = poseLocked ? true : Boolean(raw.poseEstimating);
       if (nextPoseEstimating !== Boolean(snapshotRef.current.poseEstimating)) {
         applyingRemoteRef.current = true;
         setPoseEstimating(nextPoseEstimating);
       }
 
       const nextSelected = raw.selectedId ? String(raw.selectedId) : null;
-      if (nextPoseEstimating) {
+      if (poseLocked) {
+        // 위치 지정 중: 선택·핀은 이 화면 것이 기준
+      } else if (nextPoseEstimating) {
         if (snapshotRef.current.selectedId) {
           applyingRemoteRef.current = true;
           setSelectedId(null);
@@ -135,7 +155,7 @@ export default function useMoveUiSync({
       }
 
       const nextDrop = normalizePin(raw.dropPin);
-      if (!samePin(nextDrop, snapshotRef.current.dropPin)) {
+      if (!poseLocked && !samePin(nextDrop, snapshotRef.current.dropPin)) {
         applyingRemoteRef.current = true;
         setDropPin(nextDrop);
       }
@@ -166,15 +186,52 @@ export default function useMoveUiSync({
         setLocStatus(nextLoc);
       }
 
+      const nextPhase = raw.missionPhase || null;
+      if (nextPhase !== (snapshotRef.current.missionPhase || null)) {
+        applyingRemoteRef.current = true;
+        setMissionPhase?.(nextPhase);
+      }
+
+      const nextManual = Boolean(raw.manualControl);
+      if (nextManual !== Boolean(snapshotRef.current.manualControl)) {
+        applyingRemoteRef.current = true;
+        setManualControl?.(nextManual);
+      }
+
+      const nextReady =
+        typeof raw.missionReady === "boolean" ? raw.missionReady : null;
+      if (nextReady !== (snapshotRef.current.missionReady ?? null)) {
+        applyingRemoteRef.current = true;
+        setMissionReady?.(nextReady);
+      }
+
+      const nextEvent = raw.lastEvent || null;
+      if (nextEvent !== (snapshotRef.current.lastEvent || null)) {
+        applyingRemoteRef.current = true;
+        setLastEvent?.(nextEvent);
+      }
+
+      const nextLocState = raw.localizationState || null;
+      if (nextLocState !== (snapshotRef.current.localizationState || null)) {
+        applyingRemoteRef.current = true;
+        setLocalizationState?.(nextLocState);
+      }
+
       return true;
     },
     [
       setDropPin,
       setIsNavigating,
+      setLastEvent,
+      setLocalizationState,
       setLocStatus,
+      setManualControl,
+      setMissionPhase,
+      setMissionReady,
       setMode,
       setNavGoal,
       setPoseEstimating,
+      poseLockRef,
       setSavedWards,
       setSelectedId,
       setWards,

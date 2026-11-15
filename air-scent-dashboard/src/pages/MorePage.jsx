@@ -1,4 +1,4 @@
-import { Check, Eye, Heart, Mic, Moon, Network, Play, PlugZap, Power, RefreshCw, RotateCw, Sparkles, SprayCan, Usb, Volume2, Wifi, WifiOff, Wind } from "lucide-react";
+import { Check, Eye, Heart, Map, Mic, Moon, Network, Play, PlugZap, Power, RefreshCw, RotateCw, Sparkles, SprayCan, Usb, Volume2, Wifi, WifiOff, Wind } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import AlpacaCharacter from "../components/screensaver/AlpacaCharacter";
@@ -20,14 +20,17 @@ import { clampTargetPercent } from "../utils/fragranceIntensity";
 import { displayWardScentLabel } from "../utils/scentVisual";
 import { sensorLabelTone } from "../utils/sensorLabels";
 import {
+  clearWardScent,
   getWardScent,
   loadWardScents,
   loadWards,
   wardDisplayName,
 } from "../utils/wardStorage";
 
+import MapSettingsPanel from "../components/MapSettingsPanel";
 import "./MorePage.css";
 import { scentLabel } from "../data/scentRecipes";
+import { loadDeveloperMode, saveDeveloperMode } from "../utils/developerMode";
 
 function CharacterPreview({ characterId }) {
   switch (characterId) {
@@ -172,6 +175,26 @@ function describeSttStatus(payload) {
   };
 }
 
+function bedroomWard() {
+  const wards = loadWards();
+  return (
+    wards.find((ward) => wardDisplayName(ward) === "와드") ||
+    wards.find((ward) => {
+      const id = String(ward?.id ?? "")
+        .toLowerCase()
+        .replace(/-/g, "_");
+      return id === "room_1" || id === "room1" || id === "ward_home_1";
+    }) ||
+    wards[0] ||
+    null
+  );
+}
+
+function isBedroomScentUnset() {
+  const ward = bedroomWard();
+  return Boolean(ward && loadWardScents()?.[ward.id]?.unset);
+}
+
 function livingTargetPercent() {
   const wards = loadWards();
   const living =
@@ -196,6 +219,7 @@ const MORE_TAB_KEY = "air-scent:more-tab";
 const MORE_TABS = [
   { id: "device", label: "기기", Icon: Network },
   { id: "control", label: "제어", Icon: Wind },
+  { id: "map", label: "맵", Icon: Map },
   { id: "demo", label: "시연", Icon: Sparkles },
   { id: "screen", label: "화면", Icon: Eye },
   { id: "voice", label: "음성", Icon: Volume2 },
@@ -230,6 +254,7 @@ function MorePage({
   fragranceOn = false,
   fragranceChannels = {},
   onToggleFragranceChannel,
+  onStopFragrance,
   mqttAirQuality = null,
   arduinoConnected = false,
   onReconnectArduino,
@@ -242,6 +267,7 @@ function MorePage({
   const [speakerTestBusy, setSpeakerTestBusy] = useState(false);
   const volumeTimerRef = useRef(null);
   const [activeTab, setActiveTab] = useState(loadMoreTab);
+  const [developerMode, setDeveloperMode] = useState(loadDeveloperMode);
   const [pendingAction, setPendingAction] = useState(null);
   const [powerBusy, setPowerBusy] = useState(false);
   const [powerError, setPowerError] = useState("");
@@ -254,6 +280,55 @@ function MorePage({
   });
   const [sttBusy, setSttBusy] = useState(false);
   const [demoBusy, setDemoBusy] = useState(false);
+  /** 분무 시간 (11/15): 0 = 계속, 30·60 = 이 화면에서 켠 뒤 그 초가 지나면 자동으로 끔 */
+  const [sprayTimer, setSprayTimer] = useState(0);
+  const [sprayEndsAt, setSprayEndsAt] = useState(null);
+  const [sprayNow, setSprayNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!fragranceOn) setSprayEndsAt(null);
+  }, [fragranceOn]);
+
+  useEffect(() => {
+    if (!sprayEndsAt) return undefined;
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      setSprayNow(now);
+      if (now >= sprayEndsAt) {
+        setSprayEndsAt(null);
+        onStopFragrance?.();
+      }
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [sprayEndsAt, onStopFragrance]);
+
+  const sprayLeft = sprayEndsAt ? Math.max(0, Math.ceil((sprayEndsAt - sprayNow) / 1000)) : null;
+
+  const toggleChannelWithTimer = (channelId) => {
+    const turningOn = !(fragranceOn && fragranceChannels[channelId]);
+    onToggleFragranceChannel?.(channelId);
+    if (turningOn && sprayTimer > 0 && !sprayEndsAt) {
+      setSprayNow(Date.now());
+      setSprayEndsAt(Date.now() + sprayTimer * 1000);
+    }
+  };
+
+  const chooseSprayTimer = (seconds) => {
+    setSprayTimer(seconds);
+    if (seconds > 0 && fragranceOn) {
+      setSprayNow(Date.now());
+      setSprayEndsAt(Date.now() + seconds * 1000);
+    } else {
+      setSprayEndsAt(null);
+    }
+  };
+  const [bedroomUnset, setBedroomUnset] = useState(isBedroomScentUnset);
+
+  useEffect(() => {
+    const sync = () => setBedroomUnset(isBedroomScentUnset());
+    window.addEventListener("air-scent-ward-scents-changed", sync);
+    return () => window.removeEventListener("air-scent-ward-scents-changed", sync);
+  }, []);
   const [voiceBusyId, setVoiceBusyId] = useState(null);
   const [voiceClips, setVoiceClips] = useState([]);
   const [voiceLoading, setVoiceLoading] = useState(false);
@@ -506,6 +581,19 @@ function MorePage({
       <div className="more-tab-panel">
         {activeTab === "device" ? (
           <section className="more-air-status-card more-tab-card more-device-card">
+            <button
+              type="button"
+              className={`more-dev-mode${developerMode ? " active" : ""}`}
+              aria-pressed={developerMode}
+              onClick={() => {
+                const next = !developerMode;
+                setDeveloperMode(next);
+                saveDeveloperMode(next);
+              }}
+            >
+              <span>개발자 모드</span>
+              <strong>{developerMode ? "켜짐" : "꺼짐"}</strong>
+            </button>
             <article className={`more-arduino-card ${arduinoConnected ? "is-on" : "is-off"}`}>
               <div className="more-arduino-copy">
                 <div className="more-arduino-icon" aria-hidden="true">
@@ -702,7 +790,7 @@ function MorePage({
             </div>
             <div className="more-control-block">
               <p className="more-section-label">
-                향기{fragranceOn ? "" : " · 꺼짐"}
+                향기{fragranceOn ? (sprayLeft != null ? ` · ${sprayLeft}초 뒤 꺼짐` : "") : " · 꺼짐"}
               </p>
               <div className="more-air-status-grid" role="group" aria-label="향기 개별 전원">
                 {FRAGRANCE_CHANNELS.map((channel) => {
@@ -714,7 +802,7 @@ function MorePage({
                       type="button"
                       className={`more-air-status-btn more-fragrance-btn channel-${channel.id}${selected ? " selected" : ""}`}
                       aria-pressed={selected}
-                      onClick={() => onToggleFragranceChannel?.(channel.id)}
+                      onClick={() => toggleChannelWithTimer(channel.id)}
                     >
                       <span className="more-air-status-btn-icon" aria-hidden="true">
                         <span className="more-fragrance-dot" />
@@ -724,6 +812,27 @@ function MorePage({
                     </button>
                   );
                 })}
+              </div>
+              <div className="more-spray-timer" role="group" aria-label="분무 시간">
+                <span className="more-spray-timer-label">분무 시간</span>
+                {[
+                  { seconds: 0, label: "계속" },
+                  { seconds: 30, label: "30초" },
+                  { seconds: 60, label: "60초" },
+                ].map((option) => (
+                  <button
+                    key={option.seconds}
+                    type="button"
+                    className={`more-spray-timer-btn${sprayTimer === option.seconds ? " selected" : ""}`}
+                    aria-pressed={sprayTimer === option.seconds}
+                    onClick={() => chooseSprayTimer(option.seconds)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+                {sprayLeft != null ? (
+                  <span className="more-spray-timer-left">{sprayLeft}초 뒤 꺼짐</span>
+                ) : null}
               </div>
             </div>
             <div className="more-control-block">
@@ -764,6 +873,8 @@ function MorePage({
             </div>
           </section>
         ) : null}
+
+        {activeTab === "map" ? <MapSettingsPanel /> : null}
 
         {activeTab === "demo" ? (
           <section className="more-air-status-card more-demo-card more-tab-card">
@@ -818,11 +929,11 @@ function MorePage({
             ) : null}
 
             <div className="more-demo-log" aria-label="MQTT 수신 로그">
-              <div className="more-demo-log-head">수신 로그 · sensor/air_quality</div>
+              <div className="more-demo-log-head">수신 로그 · 와드 판정 (diffuser/ward-01/inference_ward)</div>
               <div className="more-demo-log-body" ref={logBodyRef}>
                 {mqttLogs.length === 0 ? (
                   <p className="more-demo-log-line kind-sys">
-                    <span>센서 수신 대기 중…</span>
+                    <span>와드 판정 수신 대기 중… (약 10초마다)</span>
                   </p>
                 ) : (
                   mqttLogs.map((line) => (
@@ -863,6 +974,19 @@ function MorePage({
               onClick={() => applyLivingDemo(null)}
             >
               {demoBusy ? "처리 중…" : "시연 취소"}
+            </button>
+            <button
+              type="button"
+              className={`more-demo-clear${bedroomUnset ? " is-active" : ""}`}
+              disabled={bedroomUnset}
+              onClick={() => {
+                const ward = bedroomWard();
+                if (!ward?.id) return;
+                clearWardScent(ward.id);
+                setBedroomUnset(true);
+              }}
+            >
+              {bedroomUnset ? "와드 향기 미설정됨" : "와드 향기 미설정"}
             </button>
             {foundingDemo ? (
               <button
