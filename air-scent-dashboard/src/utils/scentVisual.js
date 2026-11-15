@@ -13,12 +13,21 @@ export const SCENT_TONES = {
     soft: "rgba(251, 191, 36, 0.28)",
   },
   lavender: {
+    emoji: "💜",
+    title: "라벤더 감지",
+    short: "Lavender",
+    color: "#7c3aed",
+    glow: "rgba(124, 58, 237, 0.42)",
+    soft: "rgba(167, 139, 250, 0.3)",
+  },
+  /* 악취 (11/15) — 예전에는 라벤더 자리에 악취 모양이 있었다 */
+  odor: {
     emoji: "🦨",
     title: "악취 감지",
-    short: "odor",
-    color: "#6b5a1a",
-    glow: "rgba(122, 92, 22, 0.58)",
-    soft: "rgba(90, 78, 24, 0.42)",
+    short: "악취",
+    color: "#7c4a12",
+    glow: "rgba(146, 64, 14, 0.55)",
+    soft: "rgba(120, 72, 20, 0.4)",
   },
   mint: {
     emoji: "🌿",
@@ -165,6 +174,54 @@ export function getScentVisual(reading, { connected = true } = {}) {
     short: shown || base.short,
     detail: detail || base.title,
   };
+}
+
+/* ---------------------------------------------------------------- 새 와드 판정 (11/15)
+ * wardState(diffuser/+/inference_ward) → 지도 효과. 우리 향은 그 향 색, 악취·모르는 냄새는 악취,
+ * 깨끗함·약함·예열은 효과 없음. 효과 크기는 세기 %(0 = 공기 문턱, 100 = |Δ| 1.0)를 따른다. */
+const WARD_SCENT_TONE = { Peppermint: "mint", Lavender: "lavender", Orange: "orange" };
+const WARD_SPRAY_TONE = { peppermint: "mint", mint: "mint", lavender: "lavender", orange: "orange" };
+const WARD_TONE_KO = { mint: "페퍼민트", lavender: "라벤더", orange: "오렌지", odor: "악취", other: "향" };
+const WARD_NO_EFFECT = { ...SCENT_TONES.waiting, tone: "waiting", label: null, detail: "" };
+
+export function wardJudgmentVisual(entry) {
+  if (!entry) return null;
+  const state = String(entry.state ?? "");
+  let tone = null;
+  if (state === "MALODOR" || state === "UNKNOWN") {
+    tone = "odor";
+  } else if (state === "SCENT") {
+    // 지금 뿌리는 향(spraying)이 있으면 그게 더 정확하다 (센서 이름은 2~4° 차이라 추정)
+    const spray = String(entry.spraying ?? "").toLowerCase();
+    tone = WARD_SPRAY_TONE[spray] ?? WARD_SCENT_TONE[entry.label] ?? "other";
+  }
+  if (!tone) return WARD_NO_EFFECT;
+  const pct = Math.max(0, Math.min(100, Number(entry.strength_pct) || 0));
+  const intensity = pct / 100;
+  const base = SCENT_TONES[tone] ?? SCENT_TONES.other;
+  const name = state === "UNKNOWN" ? "모르는 냄새" : WARD_TONE_KO[tone];
+  return {
+    ...base,
+    tone,
+    label: name,
+    title: name,
+    short: `${name} ${pct}%`,
+    detail: `세기 ${pct}%`,
+    intensity,
+    scale: 0.65 + 0.75 * intensity,            // 방 빛·오라 크기
+    burstStep: pct >= 50 ? 1 : pct >= 20 ? 2 : 3, // 이모지 6개 중 몇 개마다 하나 (강할수록 많이)
+  };
+}
+
+/** 와드 판정이 있으면 주방이 아닌 와드(지도에 1개)의 효과를 그것으로 바꾼다. */
+export function applyWardJudgment(visuals, wards, entry) {
+  const visual = wardJudgmentVisual(entry);
+  if (!visual) return visuals;
+  const next = { ...visuals };
+  for (const ward of wards ?? []) {
+    if (!isKitchenWard(ward)) next[ward.id] = visual;
+  }
+  return next;
 }
 
 /** ward ↔ MQTT room 매칭 */

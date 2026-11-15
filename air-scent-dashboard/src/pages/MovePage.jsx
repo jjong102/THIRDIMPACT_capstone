@@ -41,7 +41,7 @@ import {
   yawFromRobotToMapPercent,
   yawToDisplayDeg,
 } from "../services/gdmMap";
-import { getScentVisual, readingForWard, isKitchenWard } from "../utils/scentVisual";
+import { getScentVisual, readingForWard, isKitchenWard, applyWardJudgment } from "../utils/scentVisual";
 import useMoveUiSync from "../hooks/useMoveUiSync";
 import { fetchMoveUi, putMoveUi, stopSharedFragranceSpray } from "../services/moveUi";
 import { announceMoveTo, announceScentMission } from "../utils/robotAnnounce";
@@ -51,6 +51,7 @@ import MapZoneOverlay from "../components/MapZoneOverlay";
 import RobotLaunchChip from "../components/RobotLaunchChip";
 import LocMatchChip from "../components/LocMatchChip";
 import WardScentPanel from "../components/WardScentPanel";
+import useWardJudgment from "../hooks/useWardJudgment";
 import {
   captureScentReturnPose,
   clearScentReturn,
@@ -642,6 +643,7 @@ function MovePage({
         }
       : null;
 
+  const wardJudgment = useWardJudgment();
   const wardVisuals = useMemo(() => {
     const rooms = mqttAirQuality?.rooms ?? {};
     const map = {};
@@ -670,8 +672,8 @@ function MovePage({
       });
     }
 
-    return map;
-  }, [wards, mqttAirQuality, fallbackReading]);
+    return applyWardJudgment(map, wards, wardJudgment);
+  }, [wards, mqttAirQuality, fallbackReading, wardJudgment]);
 
   const placePoint = useCallback(
     (clientX, clientY) => {
@@ -1491,14 +1493,14 @@ function MovePage({
                       className="slam-local-scent"
                       cx={cx}
                       cy={cy}
-                      r={radius}
+                      r={radius * (visual.scale ?? 1)}
                       fill={`url(#scent-grad-${ward.id})`}
                     />
                     <circle
                       className="slam-local-scent-core"
                       cx={cx}
                       cy={cy}
-                      r={radius * 0.42}
+                      r={radius * 0.42 * (visual.scale ?? 1)}
                       fill={visual.glow}
                     />
                   </g>
@@ -1632,6 +1634,7 @@ function MovePage({
                       ["--aura-glow"]: visual.glow,
                       ["--aura-soft"]: visual.soft,
                       ["--aura-color"]: visual.color,
+                      ["--aura-scale"]: visual.scale ?? 1,
                     }}
                     aria-hidden="true"
                   >
@@ -1641,7 +1644,7 @@ function MovePage({
                 )}
                 {hasScent && (
                   <div className="slam-scent-burst" aria-hidden="true">
-                    {SCENT_BURST_ANGLES.map((angle, index) => (
+                    {SCENT_BURST_ANGLES.filter((_, i) => i % (visual.burstStep ?? 1) === 0).map((angle, index) => (
                       <span
                         key={angle}
                         className="slam-scent-burst-emoji"

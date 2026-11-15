@@ -1,3 +1,4 @@
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import "./WardScentPanel.css";
@@ -81,6 +82,19 @@ function Battery({ entry }) {
 /** 와드 냄새 판정 — ward_view 처럼 지금 판정을 세기 % 가로 막대로 (반투명 유리 카드) */
 export default function WardScentPanel() {
   const [ward, setWard] = useState(null);
+  /* 오른쪽 목적지 카드와 같은 접기: 접으면 왼쪽 가장자리에 좁은 탭(같은 높이·같은 바닥 위치) */
+  const [collapsed, setCollapsed] = useState(false);
+  const [dock, setDock] = useState({ height: null, bottom: 0 });
+  const collapse = (event) => {
+    event.stopPropagation();
+    const node = event.currentTarget.closest(".ward-scent-panel");
+    if (node) {
+      const rect = node.getBoundingClientRect();
+      setDock({ height: rect.height, bottom: Math.max(0, Math.round(window.innerHeight - rect.bottom)) });
+    }
+    setCollapsed(true);
+  };
+  const expand = () => setCollapsed(false);
   const [now, setNow] = useState(() => Date.now() / 1000);
 
   useEffect(() => {
@@ -112,9 +126,27 @@ export default function WardScentPanel() {
     state === "MALODOR" || state === "UNKNOWN" ? "bad" : state === "SCENT" ? "scent" : "ok";
 
   return (
-    <section className="ward-scent-panel" aria-label="와드 냄새 판정">
+    <section
+      className={`ward-scent-panel${collapsed ? " is-collapsed" : ""}`}
+      aria-label="와드 판정"
+      style={collapsed && dock.height ? { height: dock.height, bottom: dock.bottom } : undefined}
+      onClick={collapsed ? expand : undefined}
+    >
+      {collapsed ? (
+        <button
+          type="button"
+          className="slam-icon-btn ward-scent-toggle"
+          onClick={(event) => {
+            event.stopPropagation();
+            expand();
+          }}
+          aria-label="와드 열기"
+        >
+          <ChevronRight size={18} />
+        </button>
+      ) : null}
       <header className="ward-scent-head">
-        <strong>와드 냄새</strong>
+        <strong>와드</strong>
         {current ? <Battery entry={current} /> : null}
         {stale ? (
           <span className="ward-status is-off">연결 끊김</span>
@@ -122,6 +154,14 @@ export default function WardScentPanel() {
           <span className={`ward-status is-${statusTone}`}>{STATE_KO[state] || state || "—"}</span>
         )}
         {current?.event === "ON" ? <span className="ward-status is-bad">출동</span> : null}
+        <button
+          type="button"
+          className="slam-icon-btn ward-scent-hide"
+          onClick={collapse}
+          aria-label="와드 숨기기"
+        >
+          <ChevronLeft size={16} />
+        </button>
       </header>
 
       {current && state !== "WARMUP" ? (

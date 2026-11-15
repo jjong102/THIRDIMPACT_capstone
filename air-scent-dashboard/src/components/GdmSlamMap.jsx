@@ -12,7 +12,8 @@ import {
   poseToMapPercent,
   roomsToWards,
 } from "../services/gdmMap";
-import { getScentVisual, readingForWard, isKitchenWard } from "../utils/scentVisual";
+import { getScentVisual, readingForWard, isKitchenWard, applyWardJudgment } from "../utils/scentVisual";
+import useWardJudgment from "../hooks/useWardJudgment";
 import { wardDisplayName } from "../utils/wardStorage";
 import MapZoneOverlay from "./MapZoneOverlay";
 import "../pages/MovePage.css";
@@ -38,6 +39,7 @@ function GdmSlamMap({
   const [roomPolys, setRoomPolys] = useState([]);
 
   const { pose: gdmPose, status: gdmStatus } = useGdmRobotPose(true);
+  const wardJudgment = useWardJudgment();
   const robotMap = useActiveRobotMap();
 
   useEffect(() => {
@@ -164,8 +166,8 @@ function GdmSlamMap({
       });
     }
 
-    return map;
-  }, [wards, mqttAirQuality, fallbackReading]);
+    return applyWardJudgment(map, wards, wardJudgment);
+  }, [wards, mqttAirQuality, fallbackReading, wardJudgment]);
 
   return (
     <div
@@ -333,14 +335,14 @@ function GdmSlamMap({
                   className="slam-local-scent"
                   cx={cx}
                   cy={cy}
-                  r={radius}
+                  r={radius * (visual.scale ?? 1)}
                   fill={`url(#home-scent-grad-${ward.id})`}
                 />
                 <circle
                   className="slam-local-scent-core"
                   cx={cx}
                   cy={cy}
-                  r={radius * 0.42}
+                  r={radius * 0.42 * (visual.scale ?? 1)}
                   fill={visual.glow}
                 />
               </g>
@@ -408,6 +410,7 @@ function GdmSlamMap({
                   ["--aura-glow"]: visual.glow,
                   ["--aura-soft"]: visual.soft,
                   ["--aura-color"]: visual.color,
+                  ["--aura-scale"]: visual.scale ?? 1,
                 }}
                 aria-hidden="true"
               >
@@ -417,7 +420,7 @@ function GdmSlamMap({
             )}
             {hasScent && (
               <div className="slam-scent-burst" aria-hidden="true">
-                {[0, 60, 120, 180, 240, 300].map((angle, index) => (
+                {[0, 60, 120, 180, 240, 300].filter((_, i) => i % (visual.burstStep ?? 1) === 0).map((angle, index) => (
                   <span
                     key={angle}
                     className="slam-scent-burst-emoji"
