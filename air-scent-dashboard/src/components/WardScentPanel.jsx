@@ -128,7 +128,7 @@ export default function WardScentPanel() {
   return (
     <section
       className={`ward-scent-panel${collapsed ? " is-collapsed" : ""}`}
-      aria-label="와드 냄새 판정"
+      aria-label="와드 판정"
       style={collapsed && dock.height ? { height: dock.height, bottom: dock.bottom } : undefined}
       onClick={collapsed ? expand : undefined}
     >
@@ -140,13 +140,13 @@ export default function WardScentPanel() {
             event.stopPropagation();
             expand();
           }}
-          aria-label="와드 냄새 열기"
+          aria-label="와드 열기"
         >
           <ChevronRight size={18} />
         </button>
       ) : null}
       <header className="ward-scent-head">
-        <strong>와드 냄새</strong>
+        <strong>와드</strong>
         {current ? <Battery entry={current} /> : null}
         {stale ? (
           <span className="ward-status is-off">연결 끊김</span>
@@ -158,7 +158,7 @@ export default function WardScentPanel() {
           type="button"
           className="slam-icon-btn ward-scent-hide"
           onClick={collapse}
-          aria-label="와드 냄새 숨기기"
+          aria-label="와드 숨기기"
         >
           <ChevronLeft size={16} />
         </button>
