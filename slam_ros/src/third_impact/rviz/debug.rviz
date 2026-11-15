@@ -1,0 +1,163 @@
+Panels:
+- Class: third_impact/StatusPanel
+  Name: Robot Status
+- Class: rviz_common/Displays
+  Name: Displays
+- Class: rviz_common/Views
+  Name: Views
+Visualization Manager:
+  Class: ''
+  Global Options:
+    Fixed Frame: map
+    Background Color: 40; 40; 40
+    Frame Rate: 20
+  Displays:
+  - Class: rviz_default_plugins/LaserScan
+    Name: Front LiDAR (Blue)
+    Enabled: true
+    Topic:
+      Value: /rplidar1/scan_filtered
+      Reliability Policy: Best Effort
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Depth: 5
+    Color Transformer: FlatColor
+    Color: 0; 100; 255
+    Position Transformer: XYZ
+    Style: Flat Squares
+    Size (m): 0.1
+    Size (Pixels): 3
+    Alpha: 1
+    Decay Time: 0
+    Use Fixed Frame: true
+  - Class: rviz_default_plugins/LaserScan
+    Name: Rear LiDAR (Red)
+    Enabled: true
+    Topic:
+      Value: /rplidar2/scan_filtered
+      Reliability Policy: Best Effort
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Depth: 5
+    Color Transformer: FlatColor
+    Color: 255; 0; 0
+    Position Transformer: XYZ
+    Style: Flat Squares
+    Size (m): 0.1
+    Size (Pixels): 3
+    Alpha: 1
+    Decay Time: 0
+    Use Fixed Frame: true
+  - Class: rviz_default_plugins/Map
+    Name: Map
+    Enabled: true
+    Topic:
+      Value: /map
+      Reliability Policy: Reliable
+      Durability Policy: Transient Local
+      History Policy: Keep Last
+      Depth: 10
+    Alpha: 0.8
+  - Class: rviz_default_plugins/MarkerArray
+    Name: Robot, saved goal and rectangle
+    Enabled: true
+    Topic:
+      Value: /third_impact/markers
+      Reliability Policy: Reliable
+      Durability Policy: Transient Local
+      History Policy: Keep Last
+      Depth: 10
+    Namespaces:
+      third_impact: false
+      robot: true
+      saved_goal: true
+      patrol_region: true
+      travel_boundary: true
+  - Class: rviz_default_plugins/Path
+    Name: Global path
+    Enabled: true
+    Topic:
+      Value: /plan
+      Reliability Policy: Reliable
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Depth: 10
+    Color: 0; 255; 0
+    Line Style: Lines
+    Line Width: 0.03
+  - Class: rviz_default_plugins/Path
+    Name: Local path
+    Enabled: true
+    Topic:
+      Value: /local_plan
+      Reliability Policy: Reliable
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Depth: 10
+    Color: 255; 80; 0
+    Line Style: Lines
+    Line Width: 0.03
+  - Class: rviz_default_plugins/Map
+    Name: Local costmap
+    Enabled: false
+    Topic:
+      Value: /local_costmap/costmap
+      Reliability Policy: Reliable
+      Durability Policy: Transient Local
+      History Policy: Keep Last
+      Depth: 10
+    Alpha: 0.4
+    Color Scheme: costmap
+  - Class: rviz_default_plugins/Map
+    Name: Global costmap
+    Enabled: false
+    Topic:
+      Value: /global_costmap/costmap
+      Reliability Policy: Reliable
+      Durability Policy: Transient Local
+      History Policy: Keep Last
+      Depth: 10
+    Alpha: 0.4
+    Color Scheme: costmap
+  - Class: rviz_default_plugins/Path
+    Name: Return route
+    Enabled: true
+    Topic:
+      Value: /third_impact/return_path
+      Reliability Policy: Reliable
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Depth: 10
+    Color: 255; 0; 255
+    Line Style: Lines
+    Line Width: 0.03
+  - Class: rviz_default_plugins/Path
+    Name: Return local path
+    Enabled: true
+    Topic:
+      Value: /third_impact/return_local_path
+      Reliability Policy: Reliable
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Depth: 10
+    Color: 0; 255; 255
+    Line Style: Lines
+    Line Width: 0.03
+  Tools:
+  - Class: rviz_default_plugins/Interact
+  - Class: rviz_default_plugins/MoveCamera
+  - Class: rviz_default_plugins/Select
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Scale: 70
+      Target Frame: map
+      Angle: 0
+      X: 0
+      Y: 0
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+Window Geometry:
+  Width: 1400
+  Height: 900

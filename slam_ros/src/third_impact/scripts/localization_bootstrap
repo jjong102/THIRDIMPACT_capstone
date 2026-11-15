@@ -1,0 +1,3 @@
+#!/usr/bin/env python3
+from third_impact.localization import main
+main()

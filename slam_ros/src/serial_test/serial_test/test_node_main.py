@@ -11,6 +11,9 @@ from tf_transformations import quaternion_from_euler,euler_from_quaternion
 import time
 import json
 import numpy as np
+from pathlib import Path
+from ament_index_python.packages import get_package_share_directory
+from serial_test.robot_geometry import wheel_geometry
 
 
 from rclpy.qos import qos_profile_sensor_data, QoSProfile, ReliabilityPolicy, DurabilityPolicy
@@ -29,10 +32,29 @@ import serial  ###5/5 update (STM)
 class Nodelet(Node):
     def __init__(self):
         super().__init__('serial_test')
+        geometry_path = Path(get_package_share_directory('amr')) / 'description/amr_description.urdf'
+        diameter, separation = wheel_geometry(geometry_path)
+        self.wheel_diameter = float(self.declare_parameter('wheel_diameter', diameter).value)
+        self.wheel_separation = float(self.declare_parameter('wheel_separation', separation).value)
+        if not all(np.isfinite(v) and v > 0 for v in (self.wheel_diameter, self.wheel_separation)):
+            raise ValueError('wheel_diameter and wheel_separation must be finite and positive')
+        self.get_logger().info(
+            f'Wheel geometry: diameter={self.wheel_diameter:.4f} m, '
+            f'separation={self.wheel_separation:.4f} m (defaults from {geometry_path})')
         self.pub = self.create_publisher(WheelMotor, '/wheelmotor', 10)
         self.odom_pub = self.create_publisher(Odometry, '/wheel/odometry', 10)
         self.sub_joy = self.create_subscription(Joy, '/joy', self.joy_callback, 100)
         self.sub_cmd_vel = self.create_subscription(Twist, '/cmd_vel', self.cmd_vel_callback, 100)
+        # Opt-in supervision for third_impact; legacy launch defaults are unchanged.
+        self.command_timeout = float(self.declare_parameter('command_timeout', 0.0).value)
+        self.reset_on_stop = bool(self.declare_parameter('reset_on_stop', False).value)
+        self.drive_debug = bool(self.declare_parameter('drive_debug', False).value)
+        self.drive_debug_pub = self.create_publisher(String, '/third_impact/drive_debug', 10) if self.drive_debug else None
+        self.last_wheel_commands = (0., 0.)
+        self.last_velocity_command = time.monotonic()
+        mode_qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.manual_control_pub = self.create_publisher(Bool, '/third_impact/manual_control', mode_qos)
+        self.create_timer(0.2, self.publish_control_mode)
         self.stm_pub = self.create_publisher(String, '/stm_command', 10)
 
         self.amr_data_distance = self.create_publisher(String, '/amr_data_distance', 10)
@@ -65,7 +87,7 @@ class Nodelet(Node):
         self.loopcnt = 0
 
         self.firstloop = True
-        self.JOY_CONTROL = False
+        self.JOY_CONTROL = bool(self.declare_parameter('initial_manual', False).value)
 
         # Motor driver class
         self.md = MotorDriver()
@@ -88,7 +110,7 @@ class Nodelet(Node):
         self.joy_fb = 0
         self.joy_lr = 0
         self.v_gain = 100
-        self.w_gain = 50
+        self.w_gain = 20  # Fixed turning speed; speed buttons scale only translation.
 
         self.joy_r2 = 0
         self.joy_l2 = 0
@@ -108,8 +130,6 @@ class Nodelet(Node):
         # self.md.write_BAUD()
 
         #odom param
-        self.wheel_separation = 0.272  # Adjust as necessary
-        self.wheel_diameter = 0.17    # Adjust as necessary
         self.pose_x = 0.0
         self.pose_y = 0.0
         self.pose_theta = 0.0
@@ -167,6 +187,10 @@ class Nodelet(Node):
 
     def timer_callback(self):
         self.loopcnt += 1
+        if (self.command_timeout > 0.0 and not self.JOY_CONTROL and not self.firstloop
+                and time.monotonic() - self.last_velocity_command > self.command_timeout):
+            self.target_pos1 = self.md.pos1
+            self.target_pos2 = self.md.pos2
 
         # self.md.version_check()
         # self.md.recv_read_this()
@@ -252,8 +276,8 @@ class Nodelet(Node):
                 
                 
                 # 90도 회전을 위한 엔코더 카운트 계산
-                wheel_separation = 0.298  # 바퀴 간 거리 (예시 값)
-                wheel_diameter = 0.17  # 바퀴 직경 (예시 값)
+                wheel_separation = self.wheel_separation
+                wheel_diameter = self.wheel_diameter
                 encoder_pulses_per_wheel = 240  # 바퀴 1바퀴당 엔코더 펄스
                 vel_meter = self.marker_target_distance2/4.
                 vel_enc = vel_meter / (np.pi * self.wheel_diameter / self.md.encoder_gain)
@@ -546,11 +570,32 @@ class Nodelet(Node):
 
 
 
+    def publish_drive_debug(self, v, w, reason):
+        if self.drive_debug_pub is None:
+            return
+        msg = String()
+        msg.data = json.dumps(dict(time=time.time(), command=[v,w], reason=reason,
+            encoder_actual=[self.md.pos1,self.md.pos2],
+            encoder_target=[self.target_pos1,self.target_pos2],
+            encoder_error=[self.target_pos1-self.md.pos1,self.target_pos2-self.md.pos2]))
+        self.drive_debug_pub.publish(msg)
+
     def cmd_vel_callback(self, msg):
+        now = time.monotonic()
+        elapsed = min(0.1, max(0.0, now - self.last_velocity_command))
+        self.last_velocity_command = now
         if not self.JOY_CONTROL:
             linear_velocity = msg.linear.x
             angular_velocity = msg.angular.z
             control_dt = 0.05
+            if self.command_timeout > 0.0:
+                control_dt = elapsed
+            if self.reset_on_stop and abs(linear_velocity) < 1e-9 and abs(angular_velocity) < 1e-9:
+                self.target_pos1 = self.md.pos1
+                self.target_pos2 = self.md.pos2
+                self.last_wheel_commands = (0., 0.)
+                self.publish_drive_debug(linear_velocity, angular_velocity, "stop_reset")
+                return
             alpha = 0.9
             beta = 0.9
 
@@ -573,6 +618,16 @@ class Nodelet(Node):
             velocity_right = (linear_velocity + (self.wheel_separation / 2.0) * angular_velocity)
             velocity_left = (linear_velocity - (self.wheel_separation / 2.0) * angular_velocity)
 
+            # Remove residual position demand once when a wheel reverses.
+            # Opt-in matches the supervised launch; legacy/manual control unchanged.
+            reason = 'tracking'
+            if self.reset_on_stop:
+                old_left, old_right = self.last_wheel_commands
+                if velocity_left*old_left < 0 or velocity_right*old_right < 0:
+                    self.target_pos1 = self.md.pos1
+                    self.target_pos2 = self.md.pos2
+                    reason = 'wheel_reversal_reset'
+            self.last_wheel_commands = (velocity_left, velocity_right)
             # Convert velocities to encoder changes
             encoder_delta_right = (velocity_right * control_dt * self.md.encoder_gain) / (np.pi * self.wheel_diameter)
             encoder_delta_left = (velocity_left * control_dt * self.md.encoder_gain) / (np.pi * self.wheel_diameter)
@@ -580,6 +635,7 @@ class Nodelet(Node):
             # Update target positions based on encoder changes
             self.target_pos1 += encoder_delta_left
             self.target_pos2 += encoder_delta_right
+            self.publish_drive_debug(linear_velocity, angular_velocity, reason)
 
 
             
@@ -690,6 +746,9 @@ class Nodelet(Node):
    ###############################################################################
    
 
+    def publish_control_mode(self):
+        self.manual_control_pub.publish(Bool(data=self.JOY_CONTROL))
+
     def joy_callback(self, msg):
         self.joy_fb = msg.axes[1]
         self.joy_lr = msg.axes[2]
@@ -775,6 +834,8 @@ class Nodelet(Node):
             self.vel_input2 = 0.0
 
             self.JOY_CONTROL = not self.JOY_CONTROL
+            self.last_velocity_command = time.monotonic()
+            self.publish_control_mode()
             self.get_logger().info(f"{'!!!!!!!!!!!Joystick_control!!!!!!!!!!!!' if self.JOY_CONTROL else '!!!!!!!!!!!!AUTO!!!!!!!!!!!!'}")
 
         elif self.joy_r2 == 1 and self.joy_l2 == 1:

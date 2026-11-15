@@ -53,21 +53,15 @@ ament_target_dependencies(sllidar_node
   sensor_msgs
 )
 
-add_executable(sllidar_client src/sllidar_client.cpp)
-ament_target_dependencies(sllidar_client
-  rclcpp
-  std_srvs
-  sensor_msgs
-)
 ################################################################################
 # Install
 ################################################################################
-install(DIRECTORY launch rviz
+install(DIRECTORY launch
   DESTINATION share/${PROJECT_NAME}
 )
 
 install(
-  TARGETS sllidar_node sllidar_client
+  TARGETS sllidar_node
   RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
 

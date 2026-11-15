@@ -21,8 +21,8 @@ options = {
   use_nav_sat = false,
   use_landmarks = false,
 
-  -- baseline은 반드시 1개 LiDAR부터
-  num_laser_scans = 1,
+  -- 전·후방 독립 LaserScan 입력. 장착 위치/방향은 amr_description.urdf TF 사용.
+  num_laser_scans = 2,
   num_multi_echo_laser_scans = 0,
   num_subdivisions_per_laser_scan = 1,
   num_point_clouds = 0,

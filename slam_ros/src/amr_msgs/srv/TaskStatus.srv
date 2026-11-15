@@ -1,6 +1,0 @@
-# 요청(Request) 필드
-string task_name
-
----
-# 응답(Response) 필드
-bool success

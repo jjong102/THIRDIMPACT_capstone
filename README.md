@@ -33,16 +33,16 @@
 THIRDIMPACT_capstone/
 ├── slam_ros/                        # ROS 2 워크스페이스 (로봇 · Jetson)
 │   └── src/
-│       ├── all_in_one_package/      # [자체]  통합 런치 + 자체 개발 노드
+│       ├── mapping_pkg/             # [자체]  이중 LiDAR 맵 생성 런치 · 기록
 │       ├── serial_test/             # [수정]  모터 시리얼 · 휠 오도메트리
 │       ├── ebimu_pkg/               # [수정]  IMU 퍼블리셔 + EKF
 │       ├── sllidar_ros2/            # [수정]  RPLiDAR C1 ×2 드라이버
 │       ├── laser_filters/           # [활용]  LaserScan 각도 필터
-│       ├── amr_navigator/           # [수정]  Nav2 브링업 · 파라미터 · 맵
+│       ├── amr_navigator/           # [수정]  Nav2 위치추정 런치
 │       ├── amr_cartographer/        # [수정]  Cartographer SLAM (맵 생성용)
-│       ├── amr/                     # [수정]  URDF · 메시
+│       ├── amr/                     # [수정]  로봇 URDF
 │       ├── amr_msgs/                # [활용]  커스텀 메시지 정의
-│       └── ros2_laser_scan_merger/  # [미사용] 2-LiDAR 병합 (최종 구성 제외)
+│       └── third_impact/            # [자체]  이중 LiDAR AMCL · 목표 학습 · 주행
 │
 ├── air-scent-dashboard/             # 대시보드 (발향부 Jetson · 터치 패널)
 │   ├── src/                         # [자체]  React 19 + Vite UI
@@ -51,9 +51,12 @@ THIRDIMPACT_capstone/
 │   └── scripts/                     # [자체]  키오스크 · DDS · 네트워크 설정
 │
 ├── firmware/air_control/            # [자체]  Arduino 발향 컨트롤러 (PlatformIO)
-├── ward_bme688/                     # [자체]  방별 BME688 향 분류 센서 (ESP32 → MQTT)
+├── ward_bme688/                     # [자체]  와드: BME688 ×8 온디바이스 향기·악취 판정 (ESP32 → MQTT)
+│   └── inference/                   #         펌웨어·모델·도구·문서, INTERFACE.md(연동 규격)
 └── docs/                            # 특허 · 기획 문서
 ```
+> **주행 코드 위치**: 지금 로봇에서 도는 주행은 별도 저장소 `capstone_final_ws` 의 `third_impact` 패키지(`impact_launch.py`)다.
+> 위 `slam_ros/` 는 9~10월 버전(`all_in_one_launch`)이며, 아래 2.2~2.4 도 그 기준이다. 현재 흐름은 **2.5**.
 | 표기 | 의미 |
 |---|---|
 | **[자체]** | THIRDIMPACT가 새로 작성 |
@@ -74,7 +77,7 @@ flowchart TB
         IMU["EBIMU IMU"]
         MD["모터 드라이버"]
         ARD["Arduino Uno<br/>미스트 3ch + 팬"]
-        SENS["공기질 센서<br/>(MQTT 발행)"]
+        SENS["와드 (BME688 ×8)<br/>판정 → MQTT 발행"]
     end
 
     subgraph ROS["ROS 2 Humble — 로봇"]
@@ -168,19 +171,43 @@ sequenceDiagram
 새 주행 목표가 접수되면 `post_goal_spin_node`는 어느 상태에 있든 즉시 정지하고
 `/cmd_vel` 제어권을 `controller_server`에 돌려줍니다.
 
+### 2.5 현재 출동 흐름 (11/09~ — 와드 온디바이스 판정 + `third_impact`)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant W as 와드 (BME688 ×8)
+    participant U as UI Jetson 서버<br/>(ros_nav_bridge)
+    participant R as 주행 Jetson<br/>(third_impact)
+    participant A as Arduino<br/>청정기·발향
+
+    Note over R: 평소 정찰 (/go_around 상태)
+    W->>U: MQTT inference_ward  event:"ON" (악취 3라운드 연속)
+    U->>R: /go_to_goal  (ward_dispatch.py)
+    Note over R: 정찰 취소 → 저장 목표(= 와드)로 정밀 복귀 (2cm·±5°)
+    R->>U: /arrival_at_goal
+    U->>A: ON000 청정 60초  (arrival_sequence.py)
+    U->>A: OFF + 향 채널 발향 60초
+    U->>W: MQTT cmd "SPRAY <초> <향>" (발향 중 재출동 방지)
+    U->>A: OFF000 전부 끔
+    U->>R: /go_around 정찰 재개
+```
+
+- 브라우저 화면 없이 UI Jetson 서버에서 돈다. 메시지 규격은 [ward_bme688/inference/INTERFACE.md](ward_bme688/inference/INTERFACE.md).
+- 와드 판정 원리·성능은 [ward_bme688/inference/README.md](ward_bme688/inference/README.md) (식초 양말 출동 10/10, 잘못 출동 1번/224분).
+
 ---
 
 ## 3. THIRDIMPACT가 직접 개발한 것
 
 | 구성요소 | 내용 |
 |---|---|
-| `all_in_one_package` | 패키지 전체. 단계적 통합 런치 + 아래 두 노드 |
-| `post_goal_spin_node.py` | 목표 도착 후 제자리 회전으로 향을 확산시키고, 발향 완료 신호를 받으면 전역 코스트맵에서 최근접 벽을 찾아 **반대 방향으로 정위**한 뒤 정지하는 4-상태 FSM (IDLE / SPINNING / ORIENTING / HOLDING). `velocity_smoother`의 각속도 상한을 우회하기 위해 `/cmd_vel`에 직접 발행하고, 자체 가속 램프(4.0 rad/s²)로 급발진을 막습니다 |
-| `nav_debug_logger.py` | 로봇 포즈 · 목표 · `velocity_smoother` 전후 `cmd_vel` · 액션 상태를 CSV로 기록. goal_checker 허용오차 진입 순간을 표시해 "목표에 도달하고도 정지하지 못하는" 현상의 원인을 규명한 계측 노드 |
+| `mapping_pkg` | `generate_map.launch.py`: 모터 · IMU/EKF · 전후 LiDAR · Cartographer 맵 생성과 선택적 로그 기록 |
+| `third_impact` | 전후 LiDAR 가상 스캔을 이용한 AMCL 위치추정, 초기 위치추정, 목표 학습 · 순찰 · 복귀 및 RViz 패널 |
 | `air-scent-dashboard/src/**` | React UI 전체 (페이지 · 훅 · 서비스 · 유틸). Vite 템플릿에서 시작해 전량 작성 |
 | `air-scent-dashboard/server/**` | Python HTTP 브리지. 주행 · 공기질 · 발향 · LLM · STT · TTS. 표준 라이브러리 `http.server` 기반 |
 | `firmware/air_control/**` | Arduino Uno 발향 컨트롤러 (PlatformIO). 미스트 3채널 + 확산 팬 제어 |
-| `ward_bme688/**` | BME688 8채널 향 분류(BSEC2 selectivity) → HiveMQ 발행 펌웨어 · 학습 도구 · 수신기 |
+| `ward_bme688/**` | 와드 — BME688 8채널 온디바이스 판정(기준선 차이 Δ의 방향·세기 + 8센서 표결) 펌웨어, 수집·라벨·학습·평가·모델 무선 전송 도구. 판정 규칙은 `inference/firmware/ward/ward_infer.h` 한 곳 |
 | `air-scent-dashboard/scripts/**` | 키오스크 실행, CycloneDDS 설정, 로봇 LAN 고정, ROS 2 설치 스크립트 |
 
 ---

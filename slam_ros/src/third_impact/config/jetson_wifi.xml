@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain id="any">
+    <General>
+      <Interfaces>
+        <NetworkInterface name="wlP1p1s0" />
+      </Interfaces>
+      <AllowMulticast>false</AllowMulticast>
+    </General>
+    <Discovery>
+      <ParticipantIndex>auto</ParticipantIndex>
+      <MaxAutoParticipantIndex>50</MaxAutoParticipantIndex>
+      <Peers>
+        <!-- Update these addresses when the school Wi-Fi DHCP lease changes. -->
+        <Peer Address="10.96.151.196" />
+        <Peer Address="10.96.147.234" />
+      </Peers>
+    </Discovery>
+  </Domain>
+</CycloneDDS>

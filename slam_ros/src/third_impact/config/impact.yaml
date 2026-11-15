@@ -1,0 +1,34 @@
+third_impact:
+  ros__parameters:
+    require_localization_ready: true  # stationary whole-map scan initialization before driving
+    xy_tolerance: 0.02  # estimated return-position error; physical accuracy requires field validation
+    yaw_tolerance_deg: 5.0
+    settle_seconds: 1.0
+    capture_seconds: 2.0
+    return_max_speed: 0.4  # same limit for forward and reverse return
+    return_max_angular_speed: 0.35
+    return_linear_accel: 0.35
+    return_angular_accel: 0.4
+    return_obstacle_margin: 0.01  # footprint uncertainty allowance, not a wide wall clearance
+    align_radius: 0.4  # legacy; automatic return hands off within 6 cm
+    patrol_tolerance: 0.05  # patrol only: ignore yaw and do not require settling
+    max_align_v: 0.035
+    max_align_w: 0.12
+    match_rmse: 0.025
+    match_overlap: 0.65
+    match_observability: 0.015
+    match_max_condition: 500.0
+    match_max_correction: 0.20
+    match_max_angle_deg: 15.0
+    scan_timeout: 0.45
+    pose_timeout: 1.0
+    odom_timeout: 0.3
+    stopped_linear: 0.005
+    stopped_angular: 0.01
+    footprint_half_length: 0.35
+    footprint_half_width: 0.22
+    obstacle_margin: 0.04
+    patrol_clearance: 0.45
+    retry_seconds: 2.0
+    front_scan: /rplidar1/scan_filtered
+    rear_scan: /rplidar2/scan_filtered

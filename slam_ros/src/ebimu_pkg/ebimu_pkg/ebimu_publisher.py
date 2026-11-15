@@ -81,6 +81,9 @@ class EbimuPublisher(Node):
         self.declare_parameter('use_degrees', True)
         self.declare_parameter('invert_yaw', False)
         self.declare_parameter('invert_gyro_z_with_yaw', True)
+        self.declare_parameter('orientation_format', 'quaternion')
+        # Device emits z,y,x,w; this parameter lists indices in ROS x,y,z,w order.
+        self.declare_parameter('quaternion_field_indices', '2,1,0,3')
 
         # 기본값은 quick-start 문서의 *roll,pitch,yaw
         self.declare_parameter('rpy_field_indices', '0,1,2')
@@ -105,6 +108,13 @@ class EbimuPublisher(Node):
         self.use_degrees = bool(self.get_parameter('use_degrees').value)
         self.invert_yaw = bool(self.get_parameter('invert_yaw').value)
         self.invert_gyro_z_with_yaw = bool(self.get_parameter('invert_gyro_z_with_yaw').value)
+        self.orientation_format = str(self.get_parameter('orientation_format').value)
+        self.quaternion_field_indices = parse_index_parameter(
+            self.get_parameter('quaternion_field_indices').value)
+        if self.orientation_format not in ('euler', 'quaternion'):
+            raise ValueError('orientation_format must be euler or quaternion')
+        if self.orientation_format == 'quaternion' and len(self.quaternion_field_indices) != 4:
+            raise ValueError('quaternion_field_indices must contain four indices in x,y,z,w order')
 
         self.rpy_field_indices = parse_index_parameter(self.get_parameter('rpy_field_indices').value)
         self.gyro_field_indices = parse_index_parameter(self.get_parameter('gyro_field_indices').value)
@@ -210,21 +220,32 @@ class EbimuPublisher(Node):
         if not tokens:
             return None
 
-        rpy = self.vector_from_indices(tokens, self.rpy_field_indices)
-        if rpy is None:
-            return None
-
-        roll, pitch, yaw = rpy
-
-        if self.use_degrees:
-            roll = math.radians(roll)
-            pitch = math.radians(pitch)
-            yaw = math.radians(yaw)
-
-        if self.invert_yaw:
-            yaw = -yaw
-
-        qx, qy, qz, qw = euler_to_quaternion(roll, pitch, yaw)
+        if self.orientation_format == 'quaternion':
+            indices = self.quaternion_field_indices
+            if len(indices) != 4 or any(i < 0 or i >= len(tokens) for i in indices):
+                return None
+            values = [self.token_to_float(tokens[i]) for i in indices]
+            if any(v is None or not math.isfinite(v) for v in values):
+                return None
+            norm = math.sqrt(sum(v * v for v in values))
+            if norm < 1e-9:
+                return None
+            qx, qy, qz, qw = [v / norm for v in values]
+            if self.invert_yaw:
+                roll = math.atan2(2 * (qw*qx + qy*qz), 1 - 2 * (qx*qx + qy*qy))
+                pitch = math.asin(max(-1., min(1., 2 * (qw*qy - qz*qx))))
+                yaw = math.atan2(2 * (qw*qz + qx*qy), 1 - 2 * (qy*qy + qz*qz))
+                qx, qy, qz, qw = euler_to_quaternion(roll, pitch, -yaw)
+        else:
+            rpy = self.vector_from_indices(tokens, self.rpy_field_indices)
+            if rpy is None or not all(math.isfinite(v) for v in rpy):
+                return None
+            roll, pitch, yaw = rpy
+            if self.use_degrees:
+                roll, pitch, yaw = map(math.radians, (roll, pitch, yaw))
+            if self.invert_yaw:
+                yaw = -yaw
+            qx, qy, qz, qw = euler_to_quaternion(roll, pitch, yaw)
 
         msg = Imu()
         msg.header.stamp = self.get_clock().now().to_msg()
@@ -306,9 +327,9 @@ class EbimuPublisher(Node):
                     now = time.time()
                     if now - self.last_parse_warn_time > 5.0:
                         self.get_logger().warning(
-                            'Could not parse roll/pitch/yaw for /imu/data from the current EBIMU line. '
+                            'Could not parse orientation for /imu/data from the current EBIMU line. '
                             'Raw ebimu_data is still being published. '
-                            'If your EBIMU output format is not *roll,pitch,yaw, change rpy_field_indices.'
+                            'Check orientation_format and quaternion_field_indices/rpy_field_indices.'
                         )
                         self.last_parse_warn_time = now
 

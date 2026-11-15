@@ -1,3 +1,6 @@
+  <!-- 프로파일 중앙 밑면을 base_link로 잡음-->
+  
+  
   <robot name="amr">
 
     <material name= "white">
@@ -81,7 +84,7 @@
       <collision name="wheel_left_collision">
         <origin xyz="0 0 0" rpy="0 0 0"/>
         <geometry>
-          <cylinder radius="0" length="0.046"/>
+          <cylinder radius="0.065" length="0.046"/>
         </geometry>
       </collision>
       <visual name="wheel_left_visual">
@@ -119,10 +122,8 @@
     </joint>
 
     <!--
-      IMU mount (interpreted from the user's measurement):
-      x = +0.0045 m  : robot front direction
-      y = +0.0025 m  : robot left direction
-      z = +0.1350 m  : robot up direction
+      IMU mount relative to base_link (matches imu_joint below):
+      x = -0.0365 m, y = 0.0 m, z = +0.3180 m.
 
       IMU axis mounting (IMU flipped 180 deg about its own local X axis,
       X axis kept pointing at robot front):
@@ -135,7 +136,7 @@
     <joint name="imu_joint" type="fixed">
       <parent link="base_link"/>
       <child link="imu_link"/>
-      <origin xyz="-0.027 0 0.218" rpy="3.14159265359 0 0"/> <!-- 바닥-IMU아크릴 = 0.23, IMU마운트 두께 = 0.012 -->
+      <origin xyz="-0.0365 0 0.318" rpy="3.14159265359 0 0"/> <!-- 바닥-IMU아크릴 = 0.33, IMU마운트 두께 = 0.012, 프로파일 중앙 부터 끝 = 0.015, IMU마운트 끝에서 IMU 중앙 = 0.0215-->
     </joint>
 
     <joint name="wheel_left_joint" type="continuous">
@@ -155,21 +156,22 @@
     <joint name="lidar_joint" type="fixed">
       <parent link="chassis"/>
       <child link="laser"/>
-      <origin xyz="0.0 0.0 0.0298" rpy="0 0 0"/>
+      <origin xyz="0.0 0.0 0.0465" rpy="0 0 0"/>
       <!-- <axis xyz="0 1 0"/> -->
     </joint>
 
     <joint name="lidar1_joint" type="fixed">
       <parent link="chassis"/>
       <child link="lidar1_link"/>
-      <origin xyz="0.355 0 0.0298" rpy="0 0 -3.14"/>
+      <origin xyz="0.311 0 0.0465" rpy="0 3.14 0"/>
       <!-- <axis xyz="0 1 0"/> -->
     </joint>
+    
 
     <joint name="lidar2_joint" type="fixed">
       <parent link="chassis"/>
       <child link="lidar2_link"/>
-      <origin xyz="-0.355 0 0.0298" rpy="0 0 0"/>
+      <origin xyz="-0.311 0 0.0465" rpy="0 3.14 3.14"/>
       <!-- <axis xyz="0 1 0"/> -->
     </joint>
 
