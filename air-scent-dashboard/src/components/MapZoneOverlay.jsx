@@ -53,7 +53,12 @@ function screenBottomCenter(polygon, mapLayout) {
  * 정찰제한구역은 집 핀과 따로인 방 이름표로 둔다.
  * 평소에는 "ROOM", 구역을 설정할 때(setupMode)만 "정찰제한구역"으로 보인다.
  */
-export default function MapZoneOverlay({ mapLayout, mapMeta, setupMode = false }) {
+export default function MapZoneOverlay({
+  mapLayout,
+  mapMeta,
+  setupMode = false,
+  roomColor = null,
+}) {
   const [zones, setZones] = useState(null);
 
   useEffect(() => {
@@ -108,6 +113,11 @@ export default function MapZoneOverlay({ mapLayout, mapMeta, setupMode = false }
           <polygon
             className="slam-zone-room"
             points={screenPoints(shapes.room, mapLayout)}
+            style={
+              roomColor
+                ? { fill: roomColor.fill, stroke: roomColor.stroke }
+                : undefined
+            }
           />
         ) : null}
       </svg>
@@ -124,7 +134,13 @@ export default function MapZoneOverlay({ mapLayout, mapMeta, setupMode = false }
       {roomScreen ? (
         <div
           className="slam-zone-room-badge"
-          style={{ left: `${roomScreen.x}%`, top: `${roomScreen.y}%` }}
+          style={{
+            left: `${roomScreen.x}%`,
+            top: `${roomScreen.y}%`,
+            color: roomColor?.badgeColor,
+            background: roomColor?.badgeBg,
+            borderColor: roomColor?.badgeBorder,
+          }}
         >
           <House size={14} strokeWidth={2.4} aria-hidden="true" />
           <span>{setupMode ? "정찰제한구역" : "ROOM"}</span>

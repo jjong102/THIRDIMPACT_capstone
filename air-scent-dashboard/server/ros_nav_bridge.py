@@ -29,6 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from arrival_sequence import ArrivalSequence  # noqa: E402  도착 후 자동 청정·발향
+from tts_speak import SPRAY_DONE, speak  # noqa: E402  발향 완료 → 정찰 안내
 from ward_dispatch import WardDispatch  # noqa: E402  와드 악취 → /go_to_goal
 from robot_launch import RobotLaunchWatch  # noqa: E402  주행 launch 켜짐/꺼짐 감시
 
@@ -360,12 +361,23 @@ def _on_arrival(_msg) -> None:
     }
     _select_home_ward(patch)
     seq = _get_sequence()
+    spray_first = bool(state.get("sprayFirst"))
+    channel = str(state.get("sprayChannel") or "").strip().lower()
+    if channel not in ("mint", "lavender", "orange"):
+        channel = None
     if seq.enabled:
         patch["scentMission"] = False   # 브라우저의 옛 도착 흐름(useScentMission)과 겹치지 않게
+        patch["sprayFirst"] = False
+        patch["sprayChannel"] = None
     merge_ui(patch)
     print("[ros-nav-bridge] arrival_at_goal", file=sys.stderr)
     if seq.enabled:
-        print(f"[ros-nav-bridge] 도착 → 자동 청정·발향 {seq.start(reason='arrival')}", file=sys.stderr)
+        started = seq.start(
+            reason="llm-spray" if spray_first else "arrival",
+            spray_first=spray_first,
+            channel=channel if spray_first else None,
+        )
+        print(f"[ros-nav-bridge] 도착 → {'발향부터' if spray_first else '자동 청정·발향'} {started}", file=sys.stderr)
 
 
 def _motion_patch(phase: str | None, manual: bool) -> dict:
@@ -1248,6 +1260,8 @@ def cancel_navigation() -> dict:
                 "isNavigating": False,
                 "navStatus": "CANCELED",
                 "scentMission": False,
+                "sprayFirst": False,
+                "sprayChannel": None,
                 "missionPhase": "patrol",
             }
         )
@@ -1265,6 +1279,8 @@ def publish_diffusion_complete() -> dict:
                 "isNavigating": False,
                 "navStatus": None,
                 "scentMission": False,
+                "sprayFirst": False,
+                "sprayChannel": None,
                 "missionPhase": "patrol",
             }
         )
@@ -1321,6 +1337,8 @@ def default_ui_state() -> dict:
         "scentMission": False,
         "fragranceSpraying": False,
         "fragranceWardId": None,
+        "sprayFirst": False,
+        "sprayChannel": None,
         "updatedAt": None,
     }
 
@@ -1585,6 +1603,9 @@ def merge_ui(patch: dict | None) -> dict:
         if "wardState" in patch:
             ward = patch.get("wardState")
             _ui_state["wardState"] = ward if isinstance(ward, dict) else None
+        if "wardOnline" in patch:   # 11/17 와드 status (online / LWT offline)
+            online = patch.get("wardOnline")
+            _ui_state["wardOnline"] = online if isinstance(online, dict) else None
         if "arrivalSequence" in patch:
             seq = patch.get("arrivalSequence")
             _ui_state["arrivalSequence"] = seq if isinstance(seq, dict) else None
@@ -1599,6 +1620,11 @@ def merge_ui(patch: dict | None) -> dict:
         if "fragranceWardId" in patch:
             ward_id = patch.get("fragranceWardId")
             _ui_state["fragranceWardId"] = str(ward_id) if ward_id else None
+        if "sprayFirst" in patch:
+            _ui_state["sprayFirst"] = bool(patch.get("sprayFirst"))
+        if "sprayChannel" in patch:
+            channel = str(patch.get("sprayChannel") or "").strip().lower()
+            _ui_state["sprayChannel"] = channel if channel in ("mint", "lavender", "orange") else None
 
         _ui_state["rev"] = int(_ui_state.get("rev") or 0) + 1
         _ui_state["updatedAt"] = time.time()
@@ -1871,7 +1897,15 @@ def _go_around_after_sequence() -> dict:
     """도착 후 청정·발향이 끝나면 정찰 재개 (publish_diffusion_complete 와 같지만 순서를 멈추지 않음)."""
     result = publish_empty_command("go_around")
     if result.get("ok"):
-        merge_ui({"isNavigating": False, "navStatus": None, "scentMission": False, "missionPhase": "patrol"})
+        merge_ui({
+            "isNavigating": False,
+            "navStatus": None,
+            "scentMission": False,
+            "sprayFirst": False,
+            "sprayChannel": None,
+            "missionPhase": "patrol",
+        })
+        speak(SPRAY_DONE)
     return result
 
 

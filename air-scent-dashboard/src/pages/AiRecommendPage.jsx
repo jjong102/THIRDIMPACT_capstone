@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Volume2,
+  Plus,
 } from "lucide-react";
 
 import { useCurrentTime } from "../hooks/useCurrentTime";
@@ -150,14 +151,16 @@ function AiRecommendPage({
   const formRef = useRef(form);
   const confirmDispenseRef = useRef(null);
   const retryChatRef = useRef(null);
+  const stopListeningRef = useRef(null);
   const { period, timeShort } = useCurrentTime(60000);
-  const { speaking, speak, stop } = useTtsSpeak();
+  const { speaking, speak, stop, retain, release } = useTtsSpeak();
+  const retainTtsRef = useRef(false);
 
   formRef.current = form;
 
   const appendMessage = useCallback((message) => {
     setChatMessages((prev) => [...prev, message]);
-    if (message.role === "ai" && message.text) {
+    if (message.role === "ai" && message.text && !message.silent) {
       speak(message.text);
     }
   }, [speak]);
@@ -369,6 +372,8 @@ function AiRecommendPage({
     },
   });
 
+  stopListeningRef.current = stopListening;
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages, chatStatus, recommendation, validation, listening, processing, speaking]);
@@ -379,6 +384,7 @@ function AiRecommendPage({
       stepTimerRef.current = null;
     }
 
+    stopListeningRef.current?.();
     stop();
 
     const sessionId = chatSessionRef.current + 1;
@@ -469,7 +475,9 @@ function AiRecommendPage({
         stepTimerRef.current = null;
       }
       chatSessionRef.current += 1;
-      stop();
+      if (!retainTtsRef.current) {
+        stop();
+      }
     };
   }, [view, seedPrompt, stop]);
 
@@ -492,13 +500,13 @@ function AiRecommendPage({
       return;
     }
 
-    if (!supported) {
-      setError("이 브라우저는 마이크 입력을 지원하지 않아요.");
+    if (!isSecureSpeechContext()) {
+      setError(getSpeechErrorMessage("service-not-allowed"));
       return;
     }
 
-    if (!isSecureSpeechContext()) {
-      setError(getSpeechErrorMessage("service-not-allowed"));
+    if (!supported && !navigator.mediaDevices?.getUserMedia) {
+      setError("이 브라우저는 마이크 입력을 지원하지 않아요.");
       return;
     }
 
@@ -527,6 +535,8 @@ function AiRecommendPage({
     }
 
     setChatStatus("confirming");
+    retainTtsRef.current = true;
+    retain();
 
     try {
       const sessionAtConfirm = chatSessionRef.current;
@@ -546,18 +556,15 @@ function AiRecommendPage({
         wardId: targetWardId,
         wardName: targetWardName,
       };
-      const savedText = targetWardName
-        ? `${scentLabel(scentName)}로 설정해 둘게요. ${targetWardName}에 가서 발향 시작을 눌러 주세요.`
-        : `${scentLabel(scentName)}로 설정해 둘게요. 위치에서 발향 시작을 눌러 주세요.`;
-
       onApplyRecommendation?.({
         ...applyPayload,
         persistOnly: true,
+        goSpray: true,
       });
 
       appendMessage({
         role: "ai",
-        text: savedText,
+        text: `${scentLabel(scentName, "ko")}로 향기가 설정되었습니다. 룸에 가서 발향을 시작합니다.`,
       });
       await wait(3200);
       if (chatSessionRef.current !== sessionAtConfirm) {
@@ -573,6 +580,8 @@ function AiRecommendPage({
 
       setView("recommend");
     } catch (err) {
+      retainTtsRef.current = false;
+      release();
       setError(err.message || "향 설정 저장에 실패했습니다.");
       setChatStatus("awaitingConfirm");
     }
@@ -645,6 +654,17 @@ function AiRecommendPage({
     return (
       <section className="ai-page ai-chat-page">
         <article className="ai-chat-card">
+          <div className="ai-chat-toolbar">
+            <button
+              type="button"
+              className="ai-chat-new"
+              onClick={startChatSession}
+              disabled={chatStatus === "confirming"}
+            >
+              <Plus size={14} strokeWidth={2.6} />
+              새 채팅
+            </button>
+          </div>
           <div className="ai-chat-body">
             <div className="ai-chat-messages">
               {chatMessages.map((message, index) => {

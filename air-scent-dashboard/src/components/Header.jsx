@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Bot, Eye, EyeOff, MapPin, Mic, MicOff, RefreshCw, Settings, Wifi, WifiHigh, WifiLow, WifiOff, WifiZero, Wind, SprayCan } from "lucide-react";
+import { ArrowLeft, Bot, Eye, EyeOff, Mic, MicOff, RefreshCw, Settings, Wifi, WifiHigh, WifiLow, WifiOff, WifiZero, Wind, SprayCan } from "lucide-react";
 
 import { useCurrentTime } from "../hooks/useCurrentTime";
 import { useSttHealth } from "../hooks/useSttHealth";
@@ -18,11 +18,6 @@ function koreanDetail(detail) {
   if (!text) return null;
   if (/^Paused/i.test(text)) return "일시정지 · 위치·센서 준비 대기";
   return text;
-}
-
-function remainSec(until) {
-  const left = Math.round((Number(until) || 0) - Date.now() / 1000);
-  return left > 0 ? `${left}초 남음` : null;
 }
 
 /**
@@ -54,14 +49,11 @@ function describeRobot(ui) {
   }
 
   const seq = ui.arrivalSequence;
-  if (seq?.phase === "purify") {
-    return { label: "청정 중", detail: ["도착 후 공기청정", remainSec(seq.until)].filter(Boolean).join(" · "), tone: "run" };
-  }
   if (seq?.phase === "spray") {
     const scent = SCENT_NAMES[seq.scent] || seq.scent;
     return {
       label: "발향 중",
-      detail: [scent ? `${scent} 향` : null, remainSec(seq.until)].filter(Boolean).join(" · "),
+      detail: scent ? `${scent} 향` : null,
       tone: "scent",
     };
   }
@@ -220,7 +212,7 @@ function Header({
       >
         <div className="header-left">
           <div className={`header-icon-box is-${robot.tone}`}>
-            <MapPin size={20} strokeWidth={2.4} />
+            <Bot size={20} strokeWidth={2.4} />
           </div>
 
           <div className="header-text">

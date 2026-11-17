@@ -41,6 +41,7 @@ VOICE_CLIP_DIR = Path(__file__).resolve().parent.parent / "public" / "voice-clip
 VOICE_CLIP_EXT = {".wav", ".mp3", ".ogg", ".m4a"}
 _ODOR_LINES = (
     "거실에서 악취를 감지했습니다.",
+    "룸에서 악취가 탐지되었습니다. 룸으로 가서 공기청정 및 발향을 시작합니다.",
 )
 _recent_spoken_at: dict[str, float] = {}
 _recent_spoken_lock = threading.Lock()
@@ -283,14 +284,28 @@ def current_generation() -> int:
         return _generation
 
 
+def _job_done(item: tuple) -> threading.Event | None:
+    if len(item) < 4:
+        return None
+    done = item[3]
+    return done if isinstance(done, threading.Event) else None
+
+
+def _release_job(item: tuple) -> None:
+    done = _job_done(item)
+    if done is not None:
+        done.set()
+
+
 def stop_playback() -> None:
     global _play_proc
     bump_generation()
     while True:
         try:
-            _job_queue.get_nowait()
+            item = _job_queue.get_nowait()
         except queue.Empty:
             break
+        _release_job(item)
     with _play_proc_lock:
         proc = _play_proc
         _play_proc = None
@@ -428,7 +443,7 @@ def speak_now(text: str, gen: int) -> str:
         Path(audio_path).unlink(missing_ok=True)
 
 
-def enqueue_speak(text: str) -> dict:
+def enqueue_speak(text: str, wait: bool = False) -> dict:
     spoken = normalize_speech_text(text)
     if not spoken:
         return {"ok": True, "skipped": True, "reason": "empty"}
@@ -442,7 +457,10 @@ def enqueue_speak(text: str) -> dict:
         _recent_spoken_at[spoken] = now
 
     gen = current_generation()
-    _job_queue.put((gen, "speak", spoken))
+    done = threading.Event() if wait else None
+    _job_queue.put((gen, "speak", spoken, done))
+    if done is not None:
+        done.wait(timeout=20)
     return {
         "ok": True,
         "queued": True,
@@ -452,26 +470,16 @@ def enqueue_speak(text: str) -> dict:
     }
 
 
-def _voice_clip_labels(root: Path) -> dict:
-    """voice-clips/labels.json — 파일 이름(영어, 어느 OS 에서도 안전) → 화면 버튼 이름(한글)."""
-    try:
-        data = json.loads((root / "labels.json").read_text(encoding="utf-8"))
-        return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
-    except (OSError, ValueError):
-        return {}
-
-
 def list_voice_clips() -> list[dict]:
     root = VOICE_CLIP_DIR.resolve()
     root.mkdir(parents=True, exist_ok=True)
-    labels = _voice_clip_labels(root)
     clips = []
     for path in sorted(root.iterdir(), key=lambda item: item.name.lower()):
         if not path.is_file() or path.name.startswith("."):
             continue
         if path.suffix.lower() not in VOICE_CLIP_EXT:
             continue
-        clips.append({"file": path.name, "label": labels.get(path.name, path.stem)})
+        clips.append({"file": path.name, "label": path.stem})
     return clips
 
 
@@ -504,17 +512,21 @@ def _speak_worker() -> None:
     global _engine_error
 
     while True:
-        gen, kind, payload = _job_queue.get()
-        if gen != current_generation():
-            continue
+        item = _job_queue.get()
+        gen, kind, payload = item[0], item[1], item[2]
         try:
-            if kind == "clip":
-                play_audio_file(payload, gen)
-            else:
-                speak_now(payload, gen)
-        except Exception as exc:  # noqa: BLE001
-            _engine_error = str(exc)
-            print(f"[tts-bridge] {exc}", file=sys.stderr)
+            if gen != current_generation():
+                continue
+            try:
+                if kind == "clip":
+                    play_audio_file(payload, gen)
+                else:
+                    speak_now(payload, gen)
+            except Exception as exc:  # noqa: BLE001
+                _engine_error = str(exc)
+                print(f"[tts-bridge] {exc}", file=sys.stderr)
+        finally:
+            _release_job(item)
 
 
 class TtsBridgeHandler(BaseHTTPRequestHandler):
@@ -633,8 +645,9 @@ class TtsBridgeHandler(BaseHTTPRequestHandler):
         if len(text) > 1200:
             text = text[:1200]
 
+        wait = bool(payload.get("wait"))
         try:
-            result = enqueue_speak(text)
+            result = enqueue_speak(text, wait=wait)
             print(f"[tts-bridge] → {result.get('text', text)[:80]}", file=sys.stderr)
             self._send_json(200, result)
         except Exception as exc:  # noqa: BLE001

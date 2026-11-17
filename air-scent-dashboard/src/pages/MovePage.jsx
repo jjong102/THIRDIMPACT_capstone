@@ -19,6 +19,7 @@ import {
   MAX_WARDS,
   loadWards,
   loadWardScents,
+  getWardScent,
   saveWards,
   wardDisplayName,
 } from "../utils/wardStorage";
@@ -40,17 +41,21 @@ import {
   cancelNavGoal,
   yawFromRobotToMapPercent,
   yawToDisplayDeg,
+  fetchPatrolZones,
+  orientedRectToMapPolygon,
 } from "../services/gdmMap";
-import { getScentVisual, readingForWard, isKitchenWard } from "../utils/scentVisual";
+import { boundaryFitView } from "../utils/boundaryView";
+import { getScentVisual, readingForWard, isKitchenWard, applyWardJudgment } from "../utils/scentVisual";
 import useMoveUiSync from "../hooks/useMoveUiSync";
 import { fetchMoveUi, putMoveUi, stopSharedFragranceSpray } from "../services/moveUi";
-import { announceMoveTo, announceScentMission } from "../utils/robotAnnounce";
+import { announceMoveTo, announceOdorDepart, announceScentConfigured, announceScentMission } from "../utils/robotAnnounce";
 import AiRecommendPage from "./AiRecommendPage";
-import MapScentPopover from "../components/MapScentPopover";
+import "../components/MapScentPopover.css";
 import MapZoneOverlay from "../components/MapZoneOverlay";
 import RobotLaunchChip from "../components/RobotLaunchChip";
 import LocMatchChip from "../components/LocMatchChip";
-import WardScentPanel from "../components/WardScentPanel";
+import CleanMapLayer from "../components/CleanMapLayer";
+import useWardJudgment from "../hooks/useWardJudgment";
 import {
   captureScentReturnPose,
   clearScentReturn,
@@ -158,7 +163,240 @@ const GDM_SYNC_KEY = "air-scent-wards-gdm-synced";
 // 위치 추정 화살표 전체 길이(px, 머리 포함). 약 2cm.
 const POSE_ARROW_PX = 76;
 
-const SCENT_BURST_ANGLES = [0, 60, 120, 180, 240, 300];
+const SCENT_WAVE_DELAYS = [0];
+
+function scentSpreadRadius(cx, cy, roomClip, mapLayout) {
+  let far = 0;
+  if (roomClip?.svg) {
+    for (const pair of roomClip.svg.trim().split(/\s+/)) {
+      const [x, y] = pair.split(",").map(Number);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+      far = Math.max(far, Math.hypot(x - cx, y - cy));
+    }
+  }
+  if (far <= 0) {
+    far = Math.max(mapLayout.width, mapLayout.height) * 0.46;
+  }
+  return far * 1.7;
+}
+
+function pointInPolygon(x, y, polygon) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+    const [xi, yi] = polygon[i];
+    const [xj, yj] = polygon[j];
+    const crosses = yi > y !== yj > y;
+    if (!crosses) continue;
+    const xAtY = ((xj - xi) * (y - yi)) / (yj - yi) + xi;
+    if (x < xAtY) inside = !inside;
+  }
+  return inside;
+}
+
+function closestPointOnSegment(px, py, ax, ay, bx, by) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lengthSq = dx * dx + dy * dy;
+  if (lengthSq === 0) return { x: ax, y: ay };
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lengthSq));
+  return { x: ax + t * dx, y: ay + t * dy };
+}
+
+/** 방 밖이면 가장 가까운 가장자리로 붙인다. 방이 없으면 그대로. */
+function clampToRoom(x, y, polygon) {
+  if (!polygon || polygon.length < 3) return { x, y };
+  if (pointInPolygon(x, y, polygon)) return { x, y };
+  let best = null;
+  let bestDistance = Infinity;
+  for (let index = 0; index < polygon.length; index += 1) {
+    const [ax, ay] = polygon[index];
+    const [bx, by] = polygon[(index + 1) % polygon.length];
+    const point = closestPointOnSegment(x, y, ax, ay, bx, by);
+    const distance = (point.x - x) ** 2 + (point.y - y) ** 2;
+    if (distance < bestDistance) {
+      best = point;
+      bestDistance = distance;
+    }
+  }
+  return best ?? { x, y };
+}
+const WARD_BATT_LOW_V = 3.6;
+const WARD_CHIP_LABEL = {
+  Peppermint: "페퍼민트",
+  Lavender: "라벤더",
+  Orange: "오렌지",
+  Vinegar: "식초",
+  Unknown: "모르는 냄새",
+};
+const WARD_CHIP_STATE = {
+  WARMUP: "예열",
+  CLEAN: "무향",
+  SCENT: "향기",
+  MALODOR: "악취",
+  UNKNOWN: "모르는 냄새",
+  HOLD: "보류",
+};
+
+function isOdorDepart(mqttAirQuality, wardJudgment) {
+  const state = String(wardJudgment?.state || "");
+  const judgmentLabel = String(wardJudgment?.label || "");
+  if (
+    state === "MALODOR" ||
+    state === "UNKNOWN" ||
+    judgmentLabel === "Vinegar" ||
+    judgmentLabel === "Unknown"
+  ) {
+    return true;
+  }
+  const tone = String(mqttAirQuality?.tone || "");
+  const label = String(mqttAirQuality?.label || "");
+  return tone === "odor" || /odor|악취|vinegar|식초/i.test(label);
+}
+
+/** 핀 위 현재 향기 글자색. 이름표(페퍼민트·라벤더·오렌지)와 같은 톤. */
+function liveChipTone(state, label) {
+  if (state === "MALODOR" || state === "UNKNOWN" || label === "Vinegar" || label === "Unknown") return "odor";
+  if (state === "CLEAN") return "fresh";
+  if (label === "Peppermint") return "mint";
+  if (label === "Lavender") return "lavender";
+  if (label === "Orange") return "orange";
+  if (state === "SCENT") return "other";
+  return null;
+}
+
+/** 와드 핀 위 한 줄. 배터리 점 + 이름·세기만. 판정이 없으면 null. */
+function wardLiveChip(entry) {
+  if (!entry) return null;
+  const state = entry.state;
+  const name =
+    state === "WARMUP"
+      ? "예열"
+      : WARD_CHIP_LABEL[entry.label] || WARD_CHIP_STATE[state] || null;
+  const pct = Number(entry.strength_pct);
+  const showPct = state !== "WARMUP" && state !== "CLEAN" && Number.isFinite(pct);
+  const volts = Number(entry.batt_v);
+  const batt = Number.isFinite(volts) && volts >= 0 ? (volts < WARD_BATT_LOW_V ? "low" : "ok") : null;
+  if (!name && !batt) return null;
+  return {
+    name,
+    tone: liveChipTone(state, entry.label),
+    pct: showPct ? Math.round(Math.max(0, Math.min(100, pct))) : null,
+    batt,
+    volts: batt ? volts : null,
+  };
+}
+
+const VISUAL_CHIP_NAME = {
+  mint: "페퍼민트",
+  lavender: "라벤더",
+  orange: "오렌지",
+  odor: "악취",
+  fresh: "무향",
+  other: "향",
+};
+
+/** 와드 판정이 없을 때 MQTT 신뢰도·세기를 같은 줄에 쓴다. */
+function visualLiveChip(visual) {
+  if (!visual || visual.tone === "offline" || visual.tone === "waiting") return null;
+  const fresh = visual.tone === "fresh";
+  const parsed = Number(String(visual.confidence ?? "").replace("%", ""));
+  const fromIntensity = typeof visual.intensity === "number" ? Math.round(visual.intensity * 100) : null;
+  const pct = fresh
+    ? null
+    : Number.isFinite(parsed)
+      ? Math.round(Math.max(0, Math.min(100, parsed)))
+      : fromIntensity;
+  const name = VISUAL_CHIP_NAME[visual.tone] || visual.label || null;
+  if (!name && pct == null) return null;
+  return { name, pct, batt: null, volts: null, tone: visual.tone || null };
+}
+
+function chipWithPercent(chip, visual) {
+  if (chip?.tone === "fresh" || chip?.name === "무향") return { ...chip, pct: null };
+  if (chip?.pct != null) return chip;
+  const extra = visualLiveChip(visual);
+  if (!chip) return extra;
+  if (extra?.pct == null || extra.tone === "fresh") return chip;
+  return { ...chip, pct: extra.pct, name: chip.name || extra.name };
+}
+
+const ROOM_BASE = "#d1fae5";
+const ROOM_BASE_STROKE = "#86efac";
+const ROOM_SMELL = {
+  mint: { fill: "#0d9488", stroke: "#0f766e" },
+  lavender: { fill: "#7c3aed", stroke: "#5b21b6" },
+  orange: { fill: "#eab308", stroke: "#a16207" },
+  odor: { fill: "#c2410c", stroke: "#9a3412" },
+  other: { fill: "#0f766e", stroke: "#115e59" },
+};
+
+function waveFill(visual) {
+  if (!visual || visual.tone === "waiting" || visual.tone === "offline") return null;
+  if (ROOM_SMELL[visual.tone]) return ROOM_SMELL[visual.tone].fill;
+  return null;
+}
+
+function hexRgb(hex) {
+  const value = String(hex).replace("#", "");
+  return [
+    parseInt(value.slice(0, 2), 16),
+    parseInt(value.slice(2, 4), 16),
+    parseInt(value.slice(4, 6), 16),
+  ];
+}
+
+function mixHex(from, to, amount) {
+  const a = hexRgb(from);
+  const b = hexRgb(to);
+  const t = Math.max(0, Math.min(1, amount));
+  return `#${a
+    .map((channel, index) => Math.round(channel + (b[index] - channel) * t).toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
+function hexAlpha(hex, alpha) {
+  const [r, g, b] = hexRgb(hex);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+/** 와드 세기(intensity)가 있으면 그걸, 없으면 화면에 나온 MQTT 퍼센트를 0~1로 쓴다. */
+function visualAmount(visual) {
+  if (typeof visual?.intensity === "number" && Number.isFinite(visual.intensity)) {
+    return Math.max(0, Math.min(1, visual.intensity));
+  }
+  const parsed = Number(String(visual?.confidence ?? "").replace("%", ""));
+  if (Number.isFinite(parsed)) return Math.max(0, Math.min(1, parsed / 100));
+  return 0.35;
+}
+
+/** 낮은 퍼센트는 거의 물처럼 옅고, 90% 근처는 원색에 가깝게 벌린다. */
+function colorStrength(amount) {
+  const t = Math.max(0, Math.min(1, amount));
+  return Math.pow(t, 1.55);
+}
+
+/** 냄새 없음은 연한 초록. 냄새가 있으면 초록과 섞지 않고 그 색만, 세기에 따라 진해진다. */
+function paintRoom(visual) {
+  const smell = ROOM_SMELL[visual?.tone];
+  if (!smell) {
+    return {
+      fill: hexAlpha(ROOM_BASE, 0.42),
+      stroke: ROOM_BASE_STROKE,
+      badgeColor: "#166534",
+      badgeBg: hexAlpha("#f0fdf4", 0.96),
+      badgeBorder: hexAlpha(ROOM_BASE_STROKE, 0.8),
+    };
+  }
+  const t = colorStrength(visualAmount(visual));
+  const tinted = mixHex("#f8fafc", smell.fill, 0.22 + 0.78 * t);
+  return {
+    fill: hexAlpha(tinted, 0.12 + 0.74 * t),
+    stroke: mixHex("#e2e8f0", smell.stroke, 0.25 + 0.75 * t),
+    badgeColor: smell.stroke,
+    badgeBg: hexAlpha(mixHex("#ffffff", smell.fill, 0.08 + 0.2 * t), 0.96),
+    badgeBorder: hexAlpha(smell.stroke, 0.28 + 0.5 * t),
+  };
+}
 
 function MovePage({
   data,
@@ -255,6 +493,8 @@ function MovePage({
   );
   const [scentPanelWardId, setScentPanelWardId] = useState(null);
   const [scentPanelView, setScentPanelView] = useState("buttons");
+  const [aiChatOpen, setAiChatOpen] = useState(false);
+  const [aiChatLive, setAiChatLive] = useState(false);
   const [developerMode, setDeveloperMode] = useState(loadDeveloperMode);
   const [devPrompt, setDevPrompt] = useState("");
   const [devSeed, setDevSeed] = useState("");
@@ -313,7 +553,7 @@ function MovePage({
   const [zoneKind] = useState(null);
   const [zoneBoxes, setZoneBoxes] = useState({ region: null, boundary: null });
   const [zoneDragging, setZoneDragging] = useState(false);
-  const [, setWardScents] = useState(loadWardScents);
+  const [wardScents, setWardScents] = useState(loadWardScents);
   const poseDragRef = useRef(null);
   const zoneDragRef = useRef(null);
   const destinationRef = useRef(null);
@@ -431,11 +671,84 @@ function MovePage({
   const mapRotationRef = useRef(0);
   mapRotationRef.current = mapRotation;
 
+  // 전체화면: 한계구역이 화면에 꽉 차게 (보기만 — 핀·로봇·클릭 좌표는 같은 layout 을 따른다) (11/15)
+  const [fitBoundary, setFitBoundary] = useState(null);
+  const [roomRect, setRoomRect] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const zones = await fetchPatrolZones();
+        if (cancelled) return;
+        if (zones?.boundary) {
+          setFitBoundary((prev) => (JSON.stringify(prev) === JSON.stringify(zones.boundary) ? prev : zones.boundary));
+        }
+        setRoomRect(zones?.rectangle ?? null);
+      } catch {
+        // 직전 구역 유지
+      }
+    };
+    tick();
+    const timer = window.setInterval(tick, 10000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+  const roomScent = useMemo(() => {
+    const ward = wards.find((item) => !isKitchenWard(item)) ?? wards[0];
+    if (!ward || wardScents?.[ward.id]?.unset) return null;
+    const fragrance = getWardScent(wardScents, ward.id).fragrance;
+    if (fragrance === "Lavender") return { tone: "lavender", label: "라벤더" };
+    if (fragrance === "Orange") return { tone: "orange", label: "오렌지" };
+    if (fragrance === "Mint") return { tone: "mint", label: "페퍼민트" };
+    return null;
+  }, [wards, wardScents]);
+
+  const roomPolygon = useMemo(
+    () => orientedRectToMapPolygon(roomRect, mapMeta),
+    [roomRect, mapMeta]
+  );
+  const roomPolygonRef = useRef(null);
+  roomPolygonRef.current = roomPolygon;
+  const boundaryPolygon = useMemo(
+    () => orientedRectToMapPolygon(fitBoundary, mapMeta),
+    [fitBoundary, mapMeta]
+  );
+  const boundaryClip = useMemo(() => {
+    if (!mapExpanded || !boundaryPolygon || !mapLayout) return null;
+    const points = boundaryPolygon.map(([x, y]) => {
+      const screen = mapPercentToContainer(x, y, mapLayout);
+      return `${screen.x}% ${screen.y}%`;
+    });
+    if (points.length < 3) return null;
+    return `polygon(${points.join(", ")})`;
+  }, [mapExpanded, boundaryPolygon, mapLayout]);
+  const roomClip = useMemo(() => {
+    if (!roomPolygon || !mapLayout) return null;
+    const points = roomPolygon.map(([x, y]) => {
+      const screen = mapPercentToContainer(x, y, mapLayout);
+      return {
+        svg: `${(screen.x / 100) * mapLayout.containerW},${(screen.y / 100) * mapLayout.containerH}`,
+        css: `${screen.x}% ${screen.y}%`,
+      };
+    });
+    if (points.length < 3) return null;
+    return {
+      svg: points.map((point) => point.svg).join(" "),
+      css: `polygon(${points.map((point) => point.css).join(", ")})`,
+    };
+  }, [roomPolygon, mapLayout]);
+
   const updateLayout = useCallback(() => {
     const container = mapRef.current;
     const img = imgRef.current;
     if (!container || !img?.naturalWidth) return;
 
+    const fit = mapExpanded
+      ? boundaryFitView(fitBoundary, mapMeta, img.naturalWidth, img.naturalHeight,
+          container.clientWidth, container.clientHeight, mapRotation, 1)
+      : null;
     setMapLayout(
       computeContainLayout(
         container.clientWidth,
@@ -443,12 +756,12 @@ function MovePage({
         img.naturalWidth,
         img.naturalHeight,
         mapRotation,
-        mapZoom,
-        mapCenterX,
-        mapCenterY,
+        fit ? fit.zoom : mapZoom,
+        fit ? fit.centerX : mapCenterX,
+        fit ? fit.centerY : mapCenterY,
       )
     );
-  }, [mapRotation, mapZoom, mapCenterX, mapCenterY]);
+  }, [mapRotation, mapZoom, mapCenterX, mapCenterY, mapExpanded, fitBoundary, mapMeta]);
 
   useLayoutEffect(() => {
     if (!mapReady) return undefined;
@@ -600,9 +913,9 @@ function MovePage({
     () => wards.find((ward) => ward.id === selectedId) ?? null,
     [wards, selectedId]
   );
-  const scentPanelWard = useMemo(
-    () => wards.find((ward) => ward.id === scentPanelWardId) ?? null,
-    [wards, scentPanelWardId]
+  const aiTargetWard = useMemo(
+    () => wards.find((ward) => !isKitchenWard(ward)) ?? selectedWard ?? wards[0] ?? null,
+    [wards, selectedWard]
   );
 
   useEffect(() => subscribeDeveloperMode(setDeveloperMode), []);
@@ -610,6 +923,8 @@ function MovePage({
   useEffect(() => {
     if (mode === "move" || poseEstimating) {
       setScentPanelWardId(null);
+      setAiChatOpen(false);
+      setAiChatLive(false);
     }
   }, [mode, poseEstimating]);
 
@@ -642,6 +957,9 @@ function MovePage({
         }
       : null;
 
+  const wardJudgment = useWardJudgment();
+  const odorNowRef = useRef(false);
+  odorNowRef.current = isOdorDepart(mqttAirQuality, wardJudgment);
   const wardVisuals = useMemo(() => {
     const rooms = mqttAirQuality?.rooms ?? {};
     const map = {};
@@ -670,8 +988,37 @@ function MovePage({
       });
     }
 
-    return map;
-  }, [wards, mqttAirQuality, fallbackReading]);
+    return applyWardJudgment(map, wards, wardJudgment);
+  }, [wards, mqttAirQuality, fallbackReading, wardJudgment]);
+
+  const roomColor = useMemo(() => {
+    const ward = wards.find((item) => !isKitchenWard(item)) ?? wards[0];
+    return paintRoom(ward ? wardVisuals[ward.id] : null);
+  }, [wards, wardVisuals]);
+
+  const roomEmoji = useMemo(() => {
+    const ward = wards.find((item) => !isKitchenWard(item)) ?? wards[0];
+    const visual = ward ? wardVisuals[ward.id] : null;
+    if (
+      !visual?.emoji ||
+      visual.tone === "waiting" ||
+      visual.tone === "offline" ||
+      visual.tone === "fresh" ||
+      !mapLayout
+    ) {
+      return null;
+    }
+    let point = null;
+    if (roomPolygon?.length) {
+      const x = roomPolygon.reduce((sum, pair) => sum + pair[0], 0) / roomPolygon.length;
+      const y = roomPolygon.reduce((sum, pair) => sum + pair[1], 0) / roomPolygon.length;
+      point = mapPercentToContainer(x, y, mapLayout);
+    } else if (ward) {
+      point = mapPercentToContainer(ward.x, ward.y, mapLayout);
+    }
+    if (!point) return null;
+    return { x: point.x, y: point.y, emoji: visual.emoji };
+  }, [wards, wardVisuals, mapLayout, roomPolygon]);
 
   const placePoint = useCallback(
     (clientX, clientY) => {
@@ -745,7 +1092,8 @@ function MovePage({
     const moveTo = (event) => {
       const point = placePoint(event.clientX, event.clientY);
       if (!point) return null;
-      return { x: Number(point.x.toFixed(1)), y: Number(point.y.toFixed(1)) };
+      const kept = clampToRoom(point.x, point.y, roomPolygonRef.current);
+      return { x: Number(kept.x.toFixed(1)), y: Number(kept.y.toFixed(1)) };
     };
 
     const onMove = (event) => {
@@ -1066,7 +1414,9 @@ function MovePage({
           setMoveStatus(
             `이동 중 (${world.x.toFixed(1)}, ${world.y.toFixed(1)}, ${yawToDisplayDeg(yaw)}°)`
           );
-          if (label && label !== "핀") {
+          if (odorNowRef.current) {
+            announceOdorDepart();
+          } else if (label && label !== "핀") {
             announceScentMission(label);
           } else {
             announceMoveTo(label === "핀" ? "" : label);
@@ -1098,9 +1448,14 @@ function MovePage({
       publishAtMapPercent("initial", pin.x, pin.y, "핀", Number(pin.yaw) || 0);
   }, [publishAtMapPercent]);
 
-  const startMove = () => {
+  const startMove = (options = {}) => {
     if (isMoving || isStopping || poseEstimating || manualControl) return;
-    if (locStatus === "not_localized" || missionReady === false) return;
+    if (locStatus === "not_localized" || missionReady === false) {
+      if (options.sprayFirst) {
+        setMoveStatus("위치 추정 후 와드로 가서 발향할 수 있습니다");
+      }
+      return;
+    }
 
     void (async () => {
       const isScent = Boolean(selectedWard && !dropPin && !poseEstimating);
@@ -1121,14 +1476,21 @@ function MovePage({
       }
       setIsMoving(true);
       setIsNavigating(true);
-      setMoveStatus("목표로 복귀");
+      setMoveStatus(options.sprayFirst ? "와드로 이동" : "목표로 복귀");
       if (isScent) {
         await captureScentReturnPose(gdmPose, mapMeta);
       } else {
         clearScentReturn();
       }
       try {
+        if (options.sprayFirst) {
+          await putMoveUi({
+            sprayFirst: true,
+            sprayChannel: options.channel || null,
+          });
+        }
         await sendNavGoal({ x: 0, y: 0, yaw: 0, frame_id: "map" });
+        const odorNow = odorNowRef.current && !options.sprayFirst;
         await putMoveUi({
           selectedId: isScent ? selectedWard.id : selectedId,
           dropPin: null,
@@ -1136,15 +1498,21 @@ function MovePage({
           isNavigating: true,
           scentMission: true,
           mode: "select",
+          ...(odorNow ? { sprayFirst: false, sprayChannel: null } : {}),
         });
         setIsMoving(false);
-        setMoveStatus("목표로 복귀 중");
-        if (isScent) announceScentMission(selectedWard);
+        setMoveStatus(options.sprayFirst ? "와드로 이동 중" : "목표로 복귀 중");
+        if (options.sprayFirst) announceScentConfigured(options.channel);
+        else if (odorNow) announceOdorDepart();
+        else if (isScent) announceScentMission(selectedWard);
         else announceMoveTo("목표");
       } catch (error) {
         setIsMoving(false);
         setIsNavigating(false);
-        setMoveStatus(error?.message || "목표 복귀 실패");
+        if (options.sprayFirst) {
+          void putMoveUi({ sprayFirst: false, sprayChannel: null }).catch(() => {});
+        }
+        setMoveStatus(error?.message || (options.sprayFirst ? "와드 출발 실패" : "목표 복귀 실패"));
       }
     })();
   };
@@ -1290,6 +1658,11 @@ function MovePage({
   const wardMarkerScreen = wardMarker
     ? mapPercentToContainer(wardMarker.x, wardMarker.y, mapLayout)
     : null;
+  const smellWard = wards.find((item) => !isKitchenWard(item)) ?? wards[0];
+  const wardChip = chipWithPercent(
+    wardLiveChip(wardJudgment),
+    smellWard ? wardVisuals[smellWard.id] : null,
+  );
   const pathGoalScreen = isNavigating
     ? navGoalScreen || dropPinScreen || selectedScreen
     : null;
@@ -1336,6 +1709,7 @@ function MovePage({
             "--map-view-scale": mapLayout?.viewScale ?? mapZoom / 100,
             "--map-pan-x": `${mapLayout?.panX ?? 0}px`,
             "--map-pan-y": `${mapLayout?.panY ?? 0}px`,
+            "--boundary-clip": boundaryClip ?? "none",
           }}
           onPointerDown={handleMapPointer}
           role="application"
@@ -1365,6 +1739,8 @@ function MovePage({
                 }}
               />
             )}
+            {/* 보기 전용: 한계구역 안 벽은 매끈한 선, 밖은 흐리게 (원본 지도·좌표는 그대로) */}
+            <CleanMapLayer src={robotMap.imageUrl} mapMeta={mapMeta} ready={mapReady} />
             <div className="slam-map-vignette" />
             <div
               className={`slam-map-fallback ${mapFailed || !mapReady ? "visible" : ""}`}
@@ -1402,29 +1778,6 @@ function MovePage({
                     </clipPath>
                   );
                 })}
-                {wards.map((ward) => {
-                  const visual = wardVisuals[ward.id];
-                  if (
-                    !visual ||
-                    visual.tone === "waiting" ||
-                    visual.tone === "offline"
-                  ) {
-                    return null;
-                  }
-                  return (
-                    <radialGradient
-                      key={`grad-${ward.id}`}
-                      id={`scent-grad-${ward.id}`}
-                      cx="50%"
-                      cy="50%"
-                      r="50%"
-                    >
-                      <stop offset="0%" stopColor={visual.color} stopOpacity="0.55" />
-                      <stop offset="45%" stopColor={visual.color} stopOpacity="0.22" />
-                      <stop offset="100%" stopColor={visual.color} stopOpacity="0" />
-                    </radialGradient>
-                  );
-                })}
               </defs>
 
               {roomPolys.map((room) => {
@@ -1459,51 +1812,6 @@ function MovePage({
                 );
               })}
 
-              {wards.map((ward) => {
-                const visual = wardVisuals[ward.id];
-                const hasScent =
-                  visual &&
-                  visual.tone !== "waiting" &&
-                  visual.tone !== "offline";
-                if (!hasScent) return null;
-
-                const screen = mapPercentToContainer(ward.x, ward.y, mapLayout);
-                const cx = (screen.x / 100) * mapLayout.containerW;
-                const cy = (screen.y / 100) * mapLayout.containerH;
-                // 맵 대비 작은 반경 — 와드 주변만
-                const radius = Math.min(
-                  200,
-                  Math.max(
-                    130,
-                    Math.min(mapLayout.width, mapLayout.height) * 0.32
-                  )
-                );
-                const hasClip = roomPolys.some((room) => room.id === ward.id);
-
-                return (
-                  <g
-                    key={`scent-${ward.id}`}
-                    clipPath={
-                      hasClip ? `url(#ward-clip-${ward.id})` : undefined
-                    }
-                  >
-                    <circle
-                      className="slam-local-scent"
-                      cx={cx}
-                      cy={cy}
-                      r={radius}
-                      fill={`url(#scent-grad-${ward.id})`}
-                    />
-                    <circle
-                      className="slam-local-scent-core"
-                      cx={cx}
-                      cy={cy}
-                      r={radius * 0.42}
-                      fill={visual.glow}
-                    />
-                  </g>
-                );
-              })}
             </svg>
           )}
 
@@ -1511,7 +1819,95 @@ function MovePage({
             mapLayout={mapLayout}
             mapMeta={mapMeta}
             setupMode={Boolean(zoneKind) || missionPhase === "setup"}
+            roomColor={roomColor}
           />
+
+          {mapLayout && (
+            <svg className="slam-scent-svg" aria-hidden="true">
+              <defs>
+                {roomClip ? (
+                  <clipPath id="room-scent-clip">
+                    <polygon points={roomClip.svg} />
+                  </clipPath>
+                ) : null}
+                {wards.map((ward) => {
+                  const visual = wardVisuals[ward.id];
+                  const fill = waveFill(visual);
+                  if (!fill) return null;
+                  const t = colorStrength(visualAmount(visual));
+                  const stops = [
+                    ["0%", 0.05 + 0.93 * t],
+                    ["22%", 0.03 + 0.68 * t],
+                    ["48%", 0.015 + 0.4 * t],
+                    ["74%", 0.008 + 0.18 * t],
+                    ["100%", 0],
+                  ];
+                  return (
+                    <radialGradient
+                      key={`grad-${ward.id}`}
+                      id={`scent-grad-${ward.id}`}
+                      cx="50%"
+                      cy="50%"
+                      r="50%"
+                    >
+                      {stops.map(([offset, opacity]) => (
+                        <stop
+                          key={offset}
+                          offset={offset}
+                          stopColor={fill}
+                          stopOpacity={opacity}
+                        />
+                      ))}
+                    </radialGradient>
+                  );
+                })}
+              </defs>
+              {wards.map((ward) => {
+                const visual = wardVisuals[ward.id];
+                const fill = waveFill(visual);
+                if (!fill) return null;
+                const screen = mapPercentToContainer(ward.x, ward.y, mapLayout);
+                const cx = (screen.x / 100) * mapLayout.containerW;
+                const cy = (screen.y / 100) * mapLayout.containerH;
+                const radius = scentSpreadRadius(cx, cy, roomClip, mapLayout);
+                const hasClip = roomPolys.some((room) => room.id === ward.id);
+                const t = colorStrength(visualAmount(visual));
+                const strength = 0.1 + 0.9 * t;
+                return (
+                  <g
+                    key={`scent-${ward.id}`}
+                    clipPath={
+                      roomClip
+                        ? "url(#room-scent-clip)"
+                        : hasClip
+                          ? `url(#ward-clip-${ward.id})`
+                          : undefined
+                    }
+                    style={{ "--wave-strength": strength }}
+                  >
+                    {SCENT_WAVE_DELAYS.map((delay) => (
+                      <circle
+                        key={delay}
+                        className="slam-scent-wave"
+                        cx={cx}
+                        cy={cy}
+                        r={radius}
+                        fill={`url(#scent-grad-${ward.id})`}
+                        style={{ animationDelay: `${delay}s` }}
+                      />
+                    ))}
+                    <circle
+                      className="slam-local-scent-core"
+                      cx={cx}
+                      cy={cy}
+                      r={Math.min(radius * 0.36, 190)}
+                      fill={hexAlpha(fill, 0.04 + 0.78 * t)}
+                    />
+                  </g>
+                );
+              })}
+            </svg>
+          )}
 
           {isNavigating && pathGoalScreen && robotScreen ? (
             <svg className="slam-path-svg" aria-hidden="true">
@@ -1571,13 +1967,38 @@ function MovePage({
 
           {wardMarkerScreen && !dropPinScreen ? (
             <div
-              className={`slam-nav-goal${goalDragging ? " dragging" : ""}`}
+              className={`slam-nav-goal${goalDragging ? " dragging" : ""}${roomScent ? ` tone-${roomScent.tone}` : ""}`}
               style={{ left: `${wardMarkerScreen.x}%`, top: `${wardMarkerScreen.y}%` }}
-              title="와드 (끌어서 옮기기 · 화면에만 저장)"
+              title={
+                wardChip?.volts != null
+                  ? `와드 · 배터리 ${wardChip.volts.toFixed(2)}V (끌어서 옮기기)`
+                  : "와드 (룸 안에서 끌어서 옮기기 · 화면에만 저장)"
+              }
               onPointerDown={beginGoalDrag}
             >
               <Crosshair size={16} strokeWidth={2.6} />
+              {wardChip ? (
+                <span className={`slam-ward-live${wardChip.tone ? ` tone-${wardChip.tone}` : ""}`}>
+                  {wardChip.batt ? (
+                    <i
+                      className={`slam-ward-batt is-${wardChip.batt}`}
+                      aria-label={wardChip.batt === "low" ? "배터리 부족" : "배터리 양호"}
+                    />
+                  ) : null}
+                  {wardChip.name ? (
+                    <span>
+                      {wardChip.name}
+                      {wardChip.pct != null ? ` ${wardChip.pct}%` : ""}
+                    </span>
+                  ) : null}
+                </span>
+              ) : null}
               <span className="slam-nav-goal-label">와드</span>
+              {roomScent ? (
+                <span className={`slam-nav-goal-scent tone-${roomScent.tone}`}>
+                  {roomScent.label}
+                </span>
+              ) : null}
             </div>
           ) : null}
           {robotScreen ? (
@@ -1609,56 +2030,21 @@ function MovePage({
             </div>
           ) : null}
 
-          {/* 집(안방) 핀은 없앴다. 와드 자리에 발향 효과만 남긴다. */}
-          {wards.map((ward) => {
-            const screen = mapPercentToContainer(ward.x, ward.y, mapLayout);
-            const visual = wardVisuals[ward.id];
-            const hasScent =
-              visual &&
-              visual.tone !== "waiting" &&
-              visual.tone !== "offline";
-            if (!hasScent) return null;
-            return (
-              <div
-                key={ward.id}
-                className="slam-ward-wrap"
-                style={{ left: `${screen.x}%`, top: `${screen.y}%` }}
+          {/* 집(안방) 핀은 없앴다. 와드 자리에 발향 효과만 남긴다. 퍼짐은 룸 안에서만. */}
+          <div
+            className="slam-scent-room-clip"
+            style={roomClip ? { clipPath: roomClip.css } : undefined}
+          >
+            {roomEmoji ? (
+              <span
+                className="slam-room-emoji"
+                style={{ left: `${roomEmoji.x}%`, top: `${roomEmoji.y}%` }}
+                aria-hidden="true"
               >
-
-                {hasScent && (
-                  <div
-                    className={`slam-ward-aura tone-${visual.tone}`}
-                    style={{
-                      ["--aura-glow"]: visual.glow,
-                      ["--aura-soft"]: visual.soft,
-                      ["--aura-color"]: visual.color,
-                    }}
-                    aria-hidden="true"
-                  >
-                    <span className="slam-ward-aura-ring" />
-                    <span className="slam-ward-aura-ring delay" />
-                  </div>
-                )}
-                {hasScent && (
-                  <div className="slam-scent-burst" aria-hidden="true">
-                    {SCENT_BURST_ANGLES.map((angle, index) => (
-                      <span
-                        key={angle}
-                        className="slam-scent-burst-emoji"
-                        style={{
-                          "--burst-angle": `${angle}deg`,
-                          "--burst-delay": `${index * 0.42}s`,
-                        }}
-                      >
-                        {visual.emoji}
-                      </span>
-                    ))}
-                  </div>
-                )}
-
-              </div>
-            );
-          })}
+                {roomEmoji.emoji}
+              </span>
+            ) : null}
+          </div>
 
           {selectedPinDirty ? (
             <div
@@ -1833,15 +2219,6 @@ function MovePage({
               </p>
 
               <div className={`slam-selected-actions dual-pose with-goal${scentSpraying ? " with-stop" : ""}`}>
-                <RobotLaunchChip className="slam-launch-cell" />
-                <button
-                  type="button"
-                  className={`slam-pose-btn slam-pose-under-launch${poseDone ? " done" : posePendingLoc ? " pending" : " needed"}`}
-                  onClick={beginPoseEstimate}
-                >
-                  <LocateFixed size={18} />
-                  {poseLabel}
-                </button>
                 {showGoButton ? (
                 <button
                   type="button"
@@ -1886,8 +2263,99 @@ function MovePage({
           )}
         </div>
 
-          <div className="ward-scent-anchor" onPointerDown={(event) => event.stopPropagation()}>
-            <WardScentPanel />
+          <div
+            className={`ai-scent-drawer${aiChatOpen ? " is-open" : ""}`}
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <div
+              className="ai-scent-drawer-panel"
+              role="dialog"
+              aria-label="AI 향 추천"
+              aria-hidden={!aiChatOpen}
+              onTransitionEnd={(event) => {
+                if (event.target !== event.currentTarget) return;
+                if (event.propertyName !== "transform") return;
+                if (!aiChatOpen) setAiChatLive(false);
+              }}
+            >
+              <header className="ai-scent-drawer-head">
+                <p>AI 향 추천</p>
+                <button type="button" onClick={() => setAiChatOpen(false)} aria-label="채팅 닫기">
+                  <X size={16} />
+                </button>
+              </header>
+              <div className="ai-scent-drawer-body">
+                {aiChatLive && aiTargetWard && scentPanelView === "chat" ? (
+                  <AiRecommendPage
+                    key={devSeed || "voice"}
+                    recommendedFragrance={recommendedFragrance}
+                    recommendedReason={recommendedReason}
+                    data={data}
+                    mqttAirQuality={mqttAirQuality}
+                    fragranceCartridgeRemaining={fragranceCartridgeRemaining}
+                    lastDispenseAt={lastDispenseAt}
+                    targetWardName={wardDisplayName(aiTargetWard)}
+                    targetWardId={aiTargetWard.id}
+                    initialView="chat"
+                    seedPrompt={devSeed}
+                    onBack={() => setAiChatOpen(false)}
+                    onApplyRecommendation={(payload) => {
+                      onApplyFragrance?.(payload);
+                      if (!payload?.goSpray) return;
+                      const blend = payload.blend || {};
+                      const channel = ["mint", "lavender", "orange"].find(
+                        (name) => Number(blend[name]) > 0,
+                      );
+                      startMove({ sprayFirst: true, channel });
+                    }}
+                  />
+                ) : null}
+                {aiChatLive && scentPanelView === "text" ? (
+                  <form
+                    className="map-dev-prompt"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      const text = devPrompt.trim();
+                      if (!text) return;
+                      setDevSeed(text);
+                      setScentPanelView("chat");
+                    }}
+                  >
+                    <label htmlFor="map-dev-prompt-input">지금 기분</label>
+                    <textarea
+                      id="map-dev-prompt-input"
+                      value={devPrompt}
+                      rows={3}
+                      maxLength={120}
+                      placeholder="예: 꽃밭에서 쉬고 싶어요"
+                      onChange={(event) => setDevPrompt(event.target.value)}
+                      autoFocus
+                    />
+                    <button type="submit" disabled={!devPrompt.trim()}>
+                      추천받기
+                    </button>
+                  </form>
+                ) : null}
+              </div>
+            </div>
+            <button
+              type="button"
+              className="ai-scent-peek"
+              aria-expanded={aiChatOpen}
+              onClick={() => {
+                if (aiChatOpen) {
+                  setAiChatOpen(false);
+                  return;
+                }
+                setDevSeed("");
+                setScentPanelView(developerMode ? "text" : "chat");
+                setAiChatLive(true);
+                setAiChatOpen(true);
+              }}
+            >
+              <Sparkles size={15} />
+              <span>AI 향 추천</span>
+            </button>
           </div>
 
           <div
@@ -1895,6 +2363,25 @@ function MovePage({
             onPointerDown={(event) => event.stopPropagation()}
           >
             <div className="slam-map-tools-row">
+              <button
+                type="button"
+                className={`slam-pose-corner${poseDone ? " is-done" : " is-needed"}`}
+                onClick={beginPoseEstimate}
+                disabled={isMoving || poseDragging}
+                aria-label={poseLabel}
+              >
+                <LocateFixed size={16} />
+                <span>
+                  {poseEstimating
+                    ? "지정 중"
+                    : posePendingLoc
+                      ? "추정 중"
+                      : poseDone
+                        ? "추정 완료"
+                        : "위치 추정"}
+                </span>
+              </button>
+              <RobotLaunchChip className="slam-launch-corner" />
               <button
                 type="button"
                 className="slam-fullscreen-btn"
@@ -1915,7 +2402,7 @@ function MovePage({
                 </span>
               </button>
             </div>
-            {/* 상태는 맨 위 상태창이 보여 준다. 여기는 그리는 중 사용법·실패만 잠깐. */}
+            {/* 그리는 중 사용법·실패만 잠깐. */}
             {drawingHint ? (
               <p className="slam-hint slam-flash">{drawingHint}</p>
             ) : flashError ? (
@@ -1925,77 +2412,6 @@ function MovePage({
         </div>
       </article>
 
-      {scentPanelWard ? (
-        <MapScentPopover
-          key={scentPanelWard.id}
-          wardId={scentPanelWard.id}
-          wide={scentPanelView === "chat" || scentPanelView === "text"}
-          title="향 추천"
-          onClose={() => setScentPanelWardId(null)}
-        >
-          {scentPanelView === "chat" ? (
-            <AiRecommendPage
-              key={devSeed || "voice"}
-              recommendedFragrance={recommendedFragrance}
-              recommendedReason={recommendedReason}
-              data={data}
-              mqttAirQuality={mqttAirQuality}
-              fragranceCartridgeRemaining={fragranceCartridgeRemaining}
-              lastDispenseAt={lastDispenseAt}
-              targetWardName={wardDisplayName(scentPanelWard)}
-              targetWardId={scentPanelWard.id}
-              initialView="chat"
-              seedPrompt={devSeed}
-              onBack={() => setScentPanelView(developerMode ? "text" : "buttons")}
-              onApplyRecommendation={onApplyFragrance}
-            />
-          ) : scentPanelView === "text" ? (
-            <form
-              className="map-dev-prompt"
-              onSubmit={(event) => {
-                event.preventDefault();
-                const text = devPrompt.trim();
-                if (!text) return;
-                setDevSeed(text);
-                setScentPanelView("chat");
-              }}
-            >
-              <label htmlFor="map-dev-prompt-input">지금 기분</label>
-              <textarea
-                id="map-dev-prompt-input"
-                value={devPrompt}
-                rows={3}
-                maxLength={120}
-                placeholder="예: 꽃밭에서 쉬고 싶어요"
-                onChange={(event) => setDevPrompt(event.target.value)}
-                autoFocus
-              />
-              <button type="submit" disabled={!devPrompt.trim()}>
-                추천받기
-              </button>
-            </form>
-          ) : (
-            <div className="map-pin-actions">
-              <button
-                type="button"
-                className="map-pin-action scent"
-                onClick={() => {
-                  if (developerMode) {
-                    setDevSeed("");
-                    setScentPanelView("text");
-                    return;
-                  }
-                  setDevSeed("");
-                  setScentPanelView("chat");
-                }}
-              >
-                <Sparkles size={16} />
-                <span>향 추천</span>
-              </button>
-            </div>
-          )}
-        </MapScentPopover>
-      ) : null}
     </section>
   );
 }

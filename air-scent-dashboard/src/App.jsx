@@ -377,6 +377,8 @@ function App() {
             fragranceDiffusing={fragranceDiffusing}
             fragranceSending={isFragranceSending}
             onStopFragrance={handleStopFragrance}
+            fragranceChannels={fragranceChannels}
+            onToggleFragranceChannel={toggleFragranceChannel}
             recommendedFragrance={recommendedFragrance}
             recommendedReason={recommendedReason}
             fragranceCartridgeRemaining={mockRobotData.fragranceCartridgeRemaining}
@@ -448,6 +450,8 @@ function App() {
             fragranceDiffusing={fragranceDiffusing}
             fragranceSending={isFragranceSending}
             onStopFragrance={handleStopFragrance}
+            fragranceChannels={fragranceChannels}
+            onToggleFragranceChannel={toggleFragranceChannel}
             recommendedFragrance={recommendedFragrance}
             recommendedReason={recommendedReason}
             fragranceCartridgeRemaining={mockRobotData.fragranceCartridgeRemaining}

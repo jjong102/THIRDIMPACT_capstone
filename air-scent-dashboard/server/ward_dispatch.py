@@ -21,6 +21,8 @@ import sys
 import threading
 import time
 
+from tts_speak import ODOR_DEPART, speak
+
 
 class WardDispatch:
     def __init__(self, dispatch, snapshot_ui, merge_ui, is_sequence_running, log_path=None):
@@ -79,6 +81,7 @@ class WardDispatch:
     def _on_connect(self, client, _userdata, _flags, rc, *_rest):
         if rc == 0:
             client.subscribe("diffuser/+/inference_ward", qos=0)
+            client.subscribe("diffuser/+/status", qos=1)   # 11/17 펌웨어: online / LWT offline
             self.log("MQTT 연결 → diffuser/+/inference_ward 구독")
         else:
             self.log(f"MQTT 연결 실패 rc={rc}")
@@ -88,6 +91,17 @@ class WardDispatch:
         try:
             d = json.loads(msg.payload.decode("utf-8", "replace"))
         except ValueError:
+            return
+        if msg.topic.endswith("/status"):
+            # 와드 연결 상태 (retained). 꺼지거나 끊기면 브로커가 LWT 로 online:false 를 남긴다 (약 20초 안)
+            online = bool(d.get("online"))
+            try:
+                self.merge_ui({"wardOnline": {"ward_id": str(d.get("device_id") or msg.topic.split("/")[1]),
+                                              "online": online, "fw": d.get("fw"), "sleep": bool(d.get("sleep")), "at": time.time()}})
+            except Exception:  # noqa: BLE001
+                pass
+            if not msg.retain:
+                self.log(f"와드 {'연결됨' if online else ('꺼짐 (SLEEP)' if d.get('sleep') else '연결 끊김 (LWT)')}" + (f" fw {d.get('fw')}" if d.get('fw') else ""))
             return
         ward = str(d.get("device_id") or msg.topic.split("/")[1])
         entry = {
@@ -140,5 +154,6 @@ class WardDispatch:
             if ok:
                 self._last_dispatch = now
                 self.log(f"{what} → /go_to_goal 출동")
+                speak(ODOR_DEPART)
             else:
                 self.log(f"{what} — /go_to_goal 못 보냄 (ROS 준비 안 됨?)")

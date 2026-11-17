@@ -31,7 +31,14 @@
 }
 
 .slam-stage.is-expanded .slam-toolbar,
-.slam-stage.is-expanded .slam-status-bar {
+.slam-stage.is-expanded .slam-status-bar,
+.slam-stage.is-expanded .slam-pose-corner,
+.slam-stage.is-expanded .slam-map-tools .robot-launch {
+  display: none;
+}
+
+body.map-expanded .robot-launch-backdrop,
+body.map-expanded .robot-launch-pop {
   display: none;
 }
 
@@ -39,6 +46,17 @@
   margin: 0;
   border: none;
   border-radius: 0;
+}
+
+.slam-stage.is-expanded .slam-map-surface,
+.slam-stage.is-expanded .slam-rooms-svg,
+.slam-stage.is-expanded .slam-zones-svg,
+.slam-stage.is-expanded .slam-scent-svg,
+.slam-stage.is-expanded .slam-scent-room-clip,
+.slam-stage.is-expanded .slam-path-svg,
+.slam-stage.is-expanded .slam-pose-svg,
+.slam-stage.is-expanded .slam-zone-draft {
+  clip-path: var(--boundary-clip);
 }
 
 .slam-toolbar {
@@ -202,7 +220,7 @@
   margin: 0;
   min-height: 0;
   border-radius: 0;
-  overflow: hidden;
+  overflow: clip;
   border: none;
   background: #eef2f7;
   cursor: crosshair;
@@ -330,6 +348,59 @@
 .slam-map-tools .slam-hint {
   padding: 4px 8px;
   border-radius: 8px;
+}
+
+.slam-pose-corner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #334155;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.slam-pose-corner.is-needed {
+  box-shadow:
+    0 0 0 3px rgba(239, 68, 68, 0.28),
+    0 0 12px 2px rgba(239, 68, 68, 0.35);
+}
+
+.slam-pose-corner.is-done {
+  color: #047857;
+  background: rgba(236, 253, 245, 0.92);
+  border-color: rgba(110, 231, 183, 0.7);
+}
+
+.slam-pose-corner:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.slam-map-tools .robot-launch {
+  flex: 0 0 auto;
+  width: auto;
+}
+
+.slam-map-tools .robot-launch-btn {
+  width: auto;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 12px;
+  font-size: 13px;
+}
+
+.slam-map-tools .robot-launch-text small {
+  display: none;
 }
 
 .slam-fullscreen-btn {
@@ -474,6 +545,16 @@
   z-index: 4;
 }
 
+.slam-scent-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 6;
+  overflow: visible;
+}
+
 .slam-zones-svg {
   position: absolute;
   inset: 0;
@@ -492,9 +573,25 @@
 }
 
 .slam-zone-room {
-  fill: rgba(249, 115, 22, 0.34);
-  stroke: #ea580c;
+  fill: rgba(209, 250, 229, 0.45);
+  stroke: #86efac;
   stroke-width: 2.75;
+  transition: fill 0.45s ease, stroke 0.45s ease;
+}
+
+.slam-zone-room.tone-mint {
+  fill: rgba(34, 197, 94, 0.3);
+  stroke: #16a34a;
+}
+
+.slam-zone-room.tone-lavender {
+  fill: rgba(139, 92, 246, 0.32);
+  stroke: #7c3aed;
+}
+
+.slam-zone-room.tone-orange {
+  fill: rgba(250, 204, 21, 0.42);
+  stroke: #ca8a04;
 }
 
 .slam-zone-tag,
@@ -523,11 +620,33 @@
   gap: 4px;
   padding: 4px 9px;
   border-radius: 999px;
-  color: #c2410c;
-  background: rgba(255, 247, 237, 0.96);
-  border: 1px solid rgba(234, 88, 12, 0.6);
-  box-shadow: 0 4px 12px rgba(194, 65, 12, 0.18);
+  color: #166534;
+  background: rgba(240, 253, 244, 0.96);
+  border: 1px solid rgba(134, 239, 172, 0.85);
+  box-shadow: 0 4px 12px rgba(22, 163, 74, 0.16);
+  transition: color 0.45s ease, background 0.45s ease, border-color 0.45s ease;
   transform: translate(-50%, 6px);
+}
+
+.slam-zone-room-badge.tone-mint {
+  color: #15803d;
+  background: rgba(240, 253, 244, 0.96);
+  border-color: rgba(34, 197, 94, 0.65);
+  box-shadow: 0 4px 12px rgba(22, 163, 74, 0.18);
+}
+
+.slam-zone-room-badge.tone-lavender {
+  color: #6d28d9;
+  background: rgba(245, 243, 255, 0.96);
+  border-color: rgba(124, 58, 237, 0.55);
+  box-shadow: 0 4px 12px rgba(124, 58, 237, 0.18);
+}
+
+.slam-zone-room-badge.tone-orange {
+  color: #a16207;
+  background: rgba(254, 252, 232, 0.96);
+  border-color: rgba(202, 138, 4, 0.65);
+  box-shadow: 0 4px 12px rgba(202, 138, 4, 0.18);
 }
 
 .slam-room-poly {
@@ -552,20 +671,22 @@
   pointer-events: none;
 }
 
-.slam-local-scent-core {
+.slam-scent-wave {
   pointer-events: none;
-  filter: blur(10px);
-  opacity: 0.75;
-  animation: slam-room-bloom 3.2s ease-in-out infinite;
+  animation: slam-scent-wave 5.4s ease-in-out infinite;
 }
 
-@keyframes slam-room-bloom {
+.slam-local-scent-core {
+  pointer-events: none;
+}
+
+@keyframes slam-scent-wave {
   0%,
   100% {
-    opacity: 0.55;
+    opacity: calc(var(--wave-strength, 0.55) * 0.28);
   }
   50% {
-    opacity: 0.85;
+    opacity: var(--wave-strength, 0.55);
   }
 }
 
@@ -573,9 +694,10 @@
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 56px;
-  height: 56px;
-  margin: -28px 0 0 -28px;
+  width: min(72vmin, 560px);
+  height: min(72vmin, 560px);
+  margin-left: calc(min(72vmin, 560px) / -2);
+  margin-top: calc(min(72vmin, 560px) / -2);
   pointer-events: none;
   z-index: 0;
 }
@@ -586,65 +708,36 @@
 
 .slam-ward-aura-ring {
   position: absolute;
-  inset: 6%;
+  inset: 0;
   border-radius: 50%;
   border: 2px solid var(--aura-color);
-  opacity: 0.55;
-  box-shadow: 0 0 22px var(--aura-glow);
-  animation: slam-aura-spread 2.4s ease-out infinite;
-}
-
-.slam-ward-aura-ring.delay {
-  animation-delay: 1.1s;
-  opacity: 0.35;
-}
-
-.slam-scent-burst {
-  position: absolute;
-  left: 0;
-  bottom: 36px;
-  width: 0;
-  height: 0;
-  z-index: 6;
+  background: var(--aura-soft);
+  transform-origin: center center;
+  animation: slam-aura-spread 3.6s cubic-bezier(0.16, 0.72, 0.28, 1) infinite both;
   pointer-events: none;
 }
 
-.slam-scent-burst-emoji {
-  position: absolute;
-  left: 0;
-  top: 0;
-  font-size: 16px;
-  line-height: 1;
-  opacity: 0;
-  animation: slam-emoji-burst 2.8s ease-out infinite;
-  animation-delay: var(--burst-delay);
+.slam-ward-aura-ring.delay {
+  animation-delay: 1.8s;
 }
 
-@keyframes slam-emoji-burst {
-  0% {
-    transform: translate(-50%, -50%) rotate(var(--burst-angle)) translateY(8px) scale(0.35);
-    opacity: 0;
-  }
-  18% {
-    opacity: 0.95;
-  }
-  100% {
-    transform: translate(-50%, -50%) rotate(var(--burst-angle)) translateY(78px) scale(1.05);
-    opacity: 0;
-  }
+.slam-room-emoji {
+  position: absolute;
+  z-index: 6;
+  font-size: 92px;
+  line-height: 1;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  user-select: none;
 }
 
 @keyframes slam-aura-spread {
   0% {
-    transform: scale(0.45);
-    opacity: 0.65;
-  }
-  70% {
-    transform: scale(1.25);
-    opacity: 0;
+    transform: scale(0.08);
+    opacity: 0.7;
   }
   100% {
-    transform: scale(1.25);
+    transform: scale(1);
     opacity: 0;
   }
 }
@@ -789,7 +882,115 @@
   box-shadow: 0 10px 22px rgba(37, 99, 235, 0.45);
 }
 
+/* 와드 핀 위 한 줄: 배터리 점 + 냄새 이름·세기 */
+.slam-ward-live {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.2;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.15);
+  pointer-events: none;
+}
+
+.slam-ward-batt {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+
+.slam-ward-batt.is-ok {
+  background: #10b981;
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.25);
+}
+
+.slam-ward-batt.is-low {
+  background: #ef4444;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.25);
+}
+
+.slam-ward-live.tone-mint {
+  color: #15803d;
+}
+
+.slam-ward-live.tone-lavender {
+  color: #6d28d9;
+}
+
+.slam-ward-live.tone-orange {
+  color: #d97706;
+}
+
+.slam-ward-live.tone-odor {
+  color: #c2410c;
+}
+
+.slam-ward-live.tone-fresh {
+  color: #0f766e;
+}
+
+.slam-ward-live.tone-other {
+  color: #0f766e;
+}
+
 /* 와드 이름표 */
+.slam-nav-goal.tone-mint {
+  background: #16a34a;
+  box-shadow: 0 6px 16px rgba(22, 163, 74, 0.4);
+}
+
+.slam-nav-goal.tone-lavender {
+  background: #7c3aed;
+  box-shadow: 0 6px 16px rgba(124, 58, 237, 0.4);
+}
+
+.slam-nav-goal.tone-orange {
+  background: #eab308;
+  box-shadow: 0 6px 16px rgba(202, 138, 4, 0.4);
+}
+
+.slam-nav-goal-scent {
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: #ffffff;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.15);
+  pointer-events: none;
+}
+
+.slam-nav-goal-scent.tone-mint {
+  color: #15803d;
+  border-color: rgba(34, 197, 94, 0.55);
+}
+
+.slam-nav-goal-scent.tone-lavender {
+  color: #6d28d9;
+  border-color: rgba(124, 58, 237, 0.45);
+}
+
+.slam-nav-goal-scent.tone-orange {
+  color: #a16207;
+  border-color: rgba(202, 138, 4, 0.6);
+}
+
 .slam-nav-goal-label {
   position: absolute;
   top: calc(100% + 4px);
@@ -913,6 +1114,13 @@
   }
 }
 
+.slam-scent-room-clip {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  pointer-events: none;
+}
+
 .slam-ward-wrap {
   position: absolute;
   z-index: 7;
@@ -923,21 +1131,6 @@
 
 .slam-ward-point {
   display: none;
-}
-
-@keyframes slam-aura-spread {
-  0% {
-    transform: scale(0.45);
-    opacity: 0.65;
-  }
-  70% {
-    transform: scale(1.25);
-    opacity: 0;
-  }
-  100% {
-    transform: scale(1.25);
-    opacity: 0;
-  }
 }
 
 .slam-ward {
@@ -1568,7 +1761,7 @@
   right: 12px;
   bottom: 12px;
   z-index: 22;
-  width: min(420px, calc(100% - 24px));
+  width: min(300px, calc(100% - 24px));
   max-height: calc(100% - 24px);
   display: flex;
   flex-direction: column;
@@ -1947,4 +2140,148 @@
   flex-shrink: 1;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 와드 판정 세기에 따라 오라 크기 (11/15) */
+.slam-ward-aura {
+  transform: scale(var(--aura-scale, 1));
+}
+
+.slam-room-poly.scent-odor {
+  stroke-dasharray: none;
+  stroke-width: 2.25;
+  fill: none;
+}
+
+/* 지도 다듬기 (11/15) — 다듬은 사본이 준비되면 원본 이미지는 보이지만 않게 (위치·크기 계산은 원본 그대로) */
+.slam-map-clean-holder {
+  display: contents;
+}
+
+.slam-map-surface:has(.slam-map-clean-holder.is-ready) > img.slam-map-image {
+  opacity: 0 !important;
+}
+
+.slam-map-image.slam-map-clean {
+  opacity: 0.95;
+}
+
+/* 왼쪽에서 밀려 나오는 AI 채팅. 닫혀 있으면 탭만 지도 안에 보인다. */
+.ai-scent-drawer {
+  --ai-drawer-w: min(348px, 68vw);
+  position: absolute;
+  left: 0;
+  top: 54px;
+  bottom: 10px;
+  z-index: 24;
+  width: var(--ai-drawer-w);
+  pointer-events: none;
+}
+
+.ai-scent-drawer-panel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-left: none;
+  border-radius: 0 18px 18px 0;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 8px 0 24px rgba(15, 23, 42, 0.12);
+  transform: translateX(-100%);
+  transition: transform 0.36s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: auto;
+  overflow: hidden;
+}
+
+.ai-scent-drawer.is-open .ai-scent-drawer-panel {
+  transform: translateX(0);
+}
+
+.ai-scent-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 10px 8px 14px;
+}
+
+.ai-scent-drawer-head p {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 900;
+  color: #6d28d9;
+}
+
+.ai-scent-drawer-head button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.ai-scent-drawer-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.ai-scent-drawer-body .ai-chat-page,
+.ai-scent-drawer-body .ai-page {
+  flex: 1;
+  height: 100%;
+  min-height: 0;
+}
+
+.ai-scent-drawer-body .ai-chat-card {
+  border: none;
+  box-shadow: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+.ai-scent-drawer-body .map-dev-prompt {
+  width: 100%;
+  padding: 4px 14px 14px;
+}
+
+.ai-scent-peek {
+  position: absolute;
+  left: 0;
+  bottom: 8px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 42px;
+  margin: 0;
+  padding: 0 14px 0 12px;
+  border: none;
+  border-radius: 0 999px 999px 0;
+  background: linear-gradient(135deg, var(--purple), var(--blue));
+  box-shadow: 0 8px 18px rgba(109, 40, 217, 0.35);
+  color: #ffffff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: manipulation;
+  transition: opacity 0.2s ease;
+}
+
+.ai-scent-drawer.is-open .ai-scent-peek {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ai-scent-peek:active {
+  transform: scale(0.98);
 }

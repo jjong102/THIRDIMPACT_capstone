@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { CloudSun, House, SprayCan, Wind, Square } from "lucide-react";
 
 import GdmSlamMap from "../components/GdmSlamMap";
@@ -217,11 +217,11 @@ function HomePage({
     void startScentMission(activeWard);
   };
 
-  const pickWard = (ward) => {
+  const pickWard = useCallback((ward) => {
     if (!ward) return;
     setPickedWardId(ward.id);
     saveSelectedWardId(ward.id);
-  };
+  }, []);
 
   return (
     <section className="home-page">

@@ -8,7 +8,9 @@ npm run dev -- --host 0.0.0.0 &
 sleep 4
 
 chromium-browser \
-  --kiosk http://localhost:5173 \
+  --kiosk https://localhost:5173 \
+  --ignore-certificate-errors \
+  --allow-insecure-localhost \
   --force-device-scale-factor=1.75 \
   --disable-pinch \
   --overscroll-history-navigation=0 \

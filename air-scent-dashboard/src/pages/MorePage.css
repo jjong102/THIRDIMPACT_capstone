@@ -1020,7 +1020,7 @@
 
 .more-demo-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -1094,13 +1094,17 @@
   transform: scale(0.98);
 }
 
+.more-demo-btn strong {
+  font-size: 16px;
+}
+
 .more-demo-btn.scent-fresh.selected {
-  border-color: #5eead4;
-  background: #f0fdfa;
+  border-color: #86efac;
+  background: #f0fdf4;
 }
 
 .more-demo-btn.scent-fresh.selected strong {
-  color: #0f766e;
+  color: #166534;
 }
 
 .more-demo-btn.scent-odor.selected {
@@ -1121,13 +1125,22 @@
   color: #b45309;
 }
 
-.more-demo-btn.scent-mint.selected {
+.more-demo-btn.scent-lavender.selected {
   border-color: #c4b5fd;
   background: #f5f3ff;
 }
 
-.more-demo-btn.scent-mint.selected strong {
+.more-demo-btn.scent-lavender.selected strong {
   color: #6d28d9;
+}
+
+.more-demo-btn.scent-mint.selected {
+  border-color: #5eead4;
+  background: #f0fdfa;
+}
+
+.more-demo-btn.scent-mint.selected strong {
+  color: #0f766e;
 }
 
 .more-fragrance-icon {

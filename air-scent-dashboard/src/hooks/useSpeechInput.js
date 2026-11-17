@@ -21,8 +21,16 @@ export function getSpeechErrorMessage(errorCode) {
   switch (errorCode) {
     case "not-allowed":
       return "마이크 권한이 필요해요. 브라우저 주소창 옆 🔒에서 마이크를 허용해 주세요.";
-    case "service-not-allowed":
-      return "마이크는 localhost 또는 HTTPS에서만 사용할 수 있어요. http://localhost:5173 으로 접속해 주세요.";
+    case "service-not-allowed": {
+      const host =
+        typeof window !== "undefined" &&
+        window.location.hostname &&
+        window.location.hostname !== "localhost" &&
+        window.location.hostname !== "127.0.0.1"
+          ? window.location.hostname
+          : "192.168.10.1";
+      return `다른 기기에서는 https://${host}:5173 으로 연 뒤, 인증서 경고를 허용하고 마이크를 켜 주세요.`;
+    }
     case "audio-capture":
       return "마이크를 찾을 수 없어요. 장치 연결을 확인해 주세요.";
     case "no-speech":

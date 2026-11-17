@@ -46,7 +46,10 @@ export default function useSharedWards() {
         }
       } catch {
         if (!cancelled) {
-          setWards(loadWards());
+          setWards((prev) => {
+            const next = loadWards();
+            return sameWards(prev, next) ? prev : next;
+          });
         }
       }
     }

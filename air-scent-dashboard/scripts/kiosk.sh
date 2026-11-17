@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-KIOSK_URL="${KIOSK_URL:-http://localhost:5173}"
+KIOSK_URL="${KIOSK_URL:-https://localhost:5173}"
 CHROMIUM_USER_DATA="${CHROMIUM_USER_DATA:-/tmp/air-scent-chromium}"
 
 if [[ -n "${CHROMIUM_BIN:-}" ]]; then
@@ -22,6 +22,8 @@ fi
 exec "$BROWSER" \
   --user-data-dir="$CHROMIUM_USER_DATA" \
   --kiosk \
+  --ignore-certificate-errors \
+  --allow-insecure-localhost \
   --force-device-scale-factor="${KIOSK_ZOOM:-1.75}" \
   --noerrdialogs \
   --disable-infobars \

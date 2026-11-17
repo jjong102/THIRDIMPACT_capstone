@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-URL="${KIOSK_URL:-http://127.0.0.1:5173}"
+URL="${KIOSK_URL:-https://127.0.0.1:5173}"
 LOCK_FILE="${XDG_RUNTIME_DIR:-/tmp}/air-scent-chrome.lock"
 USER_DATA="${HOME}/.local/share/air-scent-chromium"
 
@@ -16,13 +16,13 @@ if [[ -z "${DISPLAY:-}" ]]; then
 fi
 
 for _ in $(seq 1 120); do
-  if curl -sf -o /dev/null --max-time 1 "$URL"; then
+  if curl -kfs -o /dev/null --max-time 1 "$URL"; then
     break
   fi
   sleep 1
 done
 
-if ! curl -sf -o /dev/null --max-time 2 "$URL"; then
+if ! curl -kfs -o /dev/null --max-time 2 "$URL"; then
   echo "Dashboard did not become ready at $URL" >&2
   exit 1
 fi
@@ -50,6 +50,8 @@ exec "$BROWSER" \
   --password-store=basic \
   --start-fullscreen \
   --kiosk \
+  --ignore-certificate-errors \
+  --allow-insecure-localhost \
   --force-device-scale-factor="$KIOSK_ZOOM" \
   --noerrdialogs \
   --disable-infobars \

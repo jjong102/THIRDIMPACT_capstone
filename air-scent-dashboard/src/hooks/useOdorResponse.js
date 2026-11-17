@@ -66,7 +66,7 @@ export default function useOdorResponse({ mqttAirQuality, goToWard, ready = true
       busyRef.current = true;
       movedRef.current = true;
       try {
-        await goToWardRef.current?.(living, { scent: true });
+        await goToWardRef.current?.(living, { scent: true, odor: true });
       } catch {
         movedRef.current = false;
       } finally {

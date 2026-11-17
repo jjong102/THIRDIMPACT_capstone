@@ -21,10 +21,10 @@ import {
   isScentReturning,
 } from "../utils/scentReturn";
 import {
+  announcePurifyAndSprayStart,
   announcePurifyDoneAndSpray,
-  announcePurifyStart,
-  announceResumePatrol,
-  announceSprayComplete,
+  announceSprayBegin,
+  announceSprayDonePatrol,
   resetMissionAnnouncements,
 } from "../utils/robotAnnounce";
 import { buildFragranceCommand } from "../utils/fragranceCommand";
@@ -321,11 +321,19 @@ export default function useScentMission({
           }
           wardIdRef.current = selectedId;
           setActiveWardId(selectedId);
-          await applyAirPurify();
-          purifiedAtRef.current = Date.now();
-          sprayedAtRef.current = 0;
-          setPhaseSafe("purifying");
-          announcePurifyStart(arrivalKey);
+          if (ui?.sprayFirst && selectedId) {
+            announceSprayBegin(arrivalKey);
+            await applyWardScent(selectedId);
+            sprayedAtRef.current = Date.now();
+            setPhaseSafe("spraying");
+            void putMoveUi({ sprayFirst: false, sprayChannel: null }).catch(() => {});
+          } else {
+            announcePurifyAndSprayStart(arrivalKey);
+            await applyAirPurify();
+            purifiedAtRef.current = Date.now();
+            sprayedAtRef.current = 0;
+            setPhaseSafe("purifying");
+          }
         }
 
         if (!WORK_PHASES.has(phaseRef.current)) {
@@ -398,8 +406,7 @@ export default function useScentMission({
             setFragranceDispenseComplete(true);
             sawSharedSprayRef.current = false;
             void clearSharedFragranceSpraying().catch(() => {});
-            announceSprayComplete(arrivalKey);
-            announceResumePatrol(arrivalKey);
+            announceSprayDonePatrol(arrivalKey);
             clearScentReturn();
             returnSeenMovingRef.current = false;
             returnSentAtRef.current = 0;

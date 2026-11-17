@@ -1,0 +1,302 @@
+/* 메인 지도 오른쪽 위(전체화면 버튼 밑) 작은 현황 — 와드 카드와 같은 반투명 유리 */
+.status-mini {
+  align-self: flex-end;
+  width: min(270px, calc(100% - 24px));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(6px) saturate(1.25);
+  -webkit-backdrop-filter: blur(6px) saturate(1.25);
+  box-shadow:
+    0 10px 24px rgba(15, 23, 42, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  color: #0f172a;
+  pointer-events: auto;
+}
+
+.status-mini.is-collapsed {
+  width: auto;
+}
+
+.status-mini-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-mini-head strong {
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.status-mini-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-mini-dot.is-on {
+  background: #10b981;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.7);
+}
+
+.status-mini-dot.is-off {
+  background: #94a3b8;
+}
+
+.status-mini-chip {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 850;
+  color: #64748b;
+  background: #f1f5f9;
+  white-space: nowrap;
+}
+
+.status-mini-chip.is-on {
+  color: #047857;
+  background: #ecfdf5;
+}
+
+.status-mini-toggle {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 0;
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.5);
+  color: #475569;
+  cursor: pointer;
+}
+
+
+.status-mini-key {
+  font-weight: 850;
+  color: #475569;
+  margin-right: 2px;
+}
+
+
+
+
+.status-mini-muted {
+  margin: 0;
+  font-size: 11px;
+  color: #64748b;
+}
+
+.status-mini-log {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 5px;
+  border-top: 1px solid rgba(148, 163, 184, 0.3);
+}
+
+.status-mini-line {
+  margin: 0;
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: #1e293b;
+}
+
+.status-mini-line time {
+  flex-shrink: 0;
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
+}
+
+.status-mini-line span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-mini-line.kind-demo span {
+  color: #6d28d9;
+}
+
+.status-mini-stale {
+  margin: 0 0 2px;
+  font-size: 11px;
+  font-weight: 850;
+  color: #b91c1c;
+}
+
+/* 조작 (11/15) */
+.status-mini-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(148, 163, 184, 0.3);
+}
+
+.status-mini-ctl-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.status-mini-ctl-row .status-mini-key {
+  width: 34px;
+  font-size: 11px;
+}
+
+.status-mini-btn {
+  padding: 4px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.55);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  color: #334155;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.status-mini-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.status-mini-btn.is-on {
+  border-color: #10b981;
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.status-mini-btn.scent-mint.is-on {
+  border-color: #16a34a;
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.status-mini-btn.scent-lavender.is-on {
+  border-color: #7c3aed;
+  background: #f5f3ff;
+  color: #6d28d9;
+}
+
+.status-mini-btn.scent-orange.is-on {
+  border-color: #ea580c;
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.status-mini-btn.is-selected {
+  border-color: #6d28d9;
+  background: #f5f3ff;
+  color: #6d28d9;
+}
+
+.status-mini-left {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 850;
+  color: #6d28d9;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 지도 와드 자리 밑 효과 미리보기 버튼 */
+.ward-preview-btns {
+  position: absolute;
+  /* 오른쪽 목적지 패널(z 22)보다 아래 — 작은 화면에서 와드 이름·버튼을 가리지 않게 */
+  z-index: 21;
+  display: flex;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(6px) saturate(1.25);
+  -webkit-backdrop-filter: blur(6px) saturate(1.25);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.1);
+  pointer-events: auto;
+  white-space: nowrap;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.ward-preview-btns.is-dragging {
+  cursor: grabbing;
+  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.18);
+}
+
+.ward-preview-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.8);
+  color: #475569;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.ward-preview-btn em {
+  font-style: normal;
+  font-size: 9.5px;
+  font-weight: 900;
+  color: #94a3b8;
+}
+
+.ward-preview-btn.is-on em {
+  color: inherit;
+}
+
+.ward-preview-btn.tone-mint.is-on {
+  border-color: #16a34a;
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.ward-preview-btn.tone-lavender.is-on {
+  border-color: #7c3aed;
+  background: #f5f3ff;
+  color: #6d28d9;
+}
+
+.ward-preview-btn.tone-orange.is-on {
+  border-color: #ea580c;
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.ward-preview-btn.tone-odor.is-on {
+  border-color: #92400e;
+  background: #fef3c7;
+  color: #7c4a12;
+}
+
+/* 키오스크(7인치, 높이 약 620px)에서는 오른쪽 아래 목적지 패널과 겹치므로 왼쪽 위로 */
+@media (max-height: 760px) {
+  .status-mini {
+    align-self: flex-start;
+  }
+
+  /* 향 미리보기 칩은 와드 아래 대신 위로 (아래는 목적지 패널 자리). 끌어서 옮긴 위치는 그대로 더해진다 */
+  .ward-preview-btns {
+    translate: 0 -150px;
+  }
+}

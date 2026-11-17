@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 로봇 젯슨에서 한 번만 실행. 이후 부팅마다 identity가 켜집니다.
 # 파일이 없으면 대시보드에서 받으세요:
-#   curl -fsSL http://192.168.10.1:5173/jetson-identity-install.sh | bash
+#   curl -kfsSL https://192.168.10.1:5173/jetson-identity-install.sh | bash
 set -euo pipefail
 
 if [[ "${EUID}" -ne 0 ]]; then
@@ -15,7 +15,7 @@ if [[ -f "$ROOT/jetson_identity.py" ]]; then
   install -m 0755 "$ROOT/jetson_identity.py" /usr/local/sbin/jetson_identity.py
 else
   echo "[identity] jetson_identity.py 가 없어 내장 복사본을 씁니다"
-  curl -fsSL http://192.168.10.1:5173/jetson-identity-install.sh | bash
+  curl -kfsSL https://192.168.10.1:5173/jetson-identity-install.sh | bash
   exit 0
 fi
 

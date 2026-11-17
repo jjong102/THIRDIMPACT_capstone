@@ -86,10 +86,14 @@ export default function RobotLaunchChip({ className = "" }) {
   const openPop = () => {
     const rect = btnRef.current?.getBoundingClientRect();
     if (rect) {
-      setPopPos({
-        left: Math.max(8, Math.min(rect.left, window.innerWidth - 328)),
-        bottom: window.innerHeight - rect.top + 8,
-      });
+      const left = Math.max(8, Math.min(rect.left, window.innerWidth - 328));
+      const below = rect.bottom + 8;
+      const openBelow = rect.top < 180 || window.innerHeight - rect.bottom > rect.top;
+      setPopPos(
+        openBelow
+          ? { left, top: below }
+          : { left, bottom: window.innerHeight - rect.top + 8 }
+      );
     }
     setError(null);
     setOpen(true);
@@ -169,7 +173,12 @@ export default function RobotLaunchChip({ className = "" }) {
         <div
           className="robot-launch-pop"
           role="dialog"
-          style={{ left: `${popPos.left}px`, bottom: `${popPos.bottom}px` }}
+          style={{
+            left: `${popPos.left}px`,
+            ...(popPos.top != null
+              ? { top: `${popPos.top}px` }
+              : { bottom: `${popPos.bottom}px` }),
+          }}
           onPointerDown={(event) => event.stopPropagation()}
         >
           {act ? (

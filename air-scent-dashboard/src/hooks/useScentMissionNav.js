@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import useActiveRobotMap from "./useActiveRobotMap";
-import useGdmRobotPose from "./useGdmRobotPose";
+import { useGdmRobotPoseRef } from "./useGdmRobotPose";
 import {
   cancelNavGoal,
   fetchGdmRooms,
@@ -15,7 +15,7 @@ import {
   captureScentReturnPose,
   clearScentReturn,
 } from "../utils/scentReturn";
-import { announceMoveTo, announceScentMission } from "../utils/robotAnnounce";
+import { announceMoveTo, announceOdorDepart, announceScentMission } from "../utils/robotAnnounce";
 
 export function isScentMissionTo(navUi, wardId) {
   return (
@@ -27,6 +27,21 @@ export function isScentMissionTo(navUi, wardId) {
 
 export function isNotLocalized(locStatus) {
   return String(locStatus || "").toLowerCase() === "not_localized";
+}
+
+function sameNav(a, b) {
+  return (
+    a.isNavigating === b.isNavigating &&
+    a.selectedId === b.selectedId &&
+    a.fragranceSpraying === b.fragranceSpraying &&
+    a.fragranceWardId === b.fragranceWardId &&
+    a.locStatus === b.locStatus &&
+    a.missionPhase === b.missionPhase &&
+    a.missionReady === b.missionReady &&
+    a.manualControl === b.manualControl &&
+    a.lastEvent === b.lastEvent &&
+    JSON.stringify(a.dropPin ?? null) === JSON.stringify(b.dropPin ?? null)
+  );
 }
 
 export function missionBlockReason(navUi) {
@@ -51,7 +66,7 @@ export default function useScentMissionNav({ onSelectWard } = {}) {
     lastEvent: null,
   });
   const [navBusy, setNavBusy] = useState(false);
-  const { pose: gdmPose } = useGdmRobotPose(true);
+  const poseRef = useGdmRobotPoseRef();
   const robotMap = useActiveRobotMap();
 
   useEffect(() => {
@@ -85,7 +100,7 @@ export default function useScentMissionNav({ onSelectWard } = {}) {
       try {
         const state = await fetchMoveUi();
         if (cancelled || !state) return;
-        setNavUi({
+        const next = {
           isNavigating: Boolean(state.isNavigating),
           selectedId: state.selectedId ? String(state.selectedId) : null,
           dropPin: state.dropPin ?? null,
@@ -103,7 +118,8 @@ export default function useScentMissionNav({ onSelectWard } = {}) {
             typeof state.missionReady === "boolean" ? state.missionReady : null,
           manualControl: Boolean(state.manualControl),
           lastEvent: state.lastEvent || null,
-        });
+        };
+        setNavUi((prev) => (sameNav(prev, next) ? prev : next));
       } catch {
         // keep last known nav status
       }
@@ -158,14 +174,15 @@ export default function useScentMissionNav({ onSelectWard } = {}) {
       const world = mapPercentToWorldMeters(ward.x, ward.y, mapMeta);
       if (!world) return;
 
-      const yaw = yawFromRobotToMapPercent(gdmPose, ward.x, ward.y, mapMeta, {
+      const pose = poseRef.current;
+      const yaw = yawFromRobotToMapPercent(pose, ward.x, ward.y, mapMeta, {
         reverse: true,
       });
 
       setNavBusy(true);
       try {
         clearOdorTrip();
-        await captureScentReturnPose(gdmPose, mapMeta);
+        await captureScentReturnPose(pose, mapMeta);
         await sendNavGoal({
           x: world.x,
           y: world.y,
@@ -194,11 +211,11 @@ export default function useScentMissionNav({ onSelectWard } = {}) {
         setNavBusy(false);
       }
     },
-    [gdmPose, mapMeta, navBusy, navUi, onSelectWard]
+    [mapMeta, navBusy, navUi, onSelectWard, poseRef]
   );
 
   const goToWard = useCallback(
-    async (ward, { scent = true } = {}) => {
+    async (ward, { scent = true, odor = false } = {}) => {
       if (!ward) return false;
 
       const alreadyGoing =
@@ -211,14 +228,16 @@ export default function useScentMissionNav({ onSelectWard } = {}) {
       }
 
       if (alreadyGoing) {
-        if (!scent) beginOdorTrip(ward.id);
+        if (odor) announceOdorDepart();
+        else if (!scent) beginOdorTrip(ward.id);
         return true;
       }
 
       const world = mapPercentToWorldMeters(ward.x, ward.y, mapMeta);
       if (!world) return false;
 
-      const yaw = yawFromRobotToMapPercent(gdmPose, ward.x, ward.y, mapMeta, {
+      const pose = poseRef.current;
+      const yaw = yawFromRobotToMapPercent(pose, ward.x, ward.y, mapMeta, {
         reverse: true,
       });
 
@@ -231,7 +250,7 @@ export default function useScentMissionNav({ onSelectWard } = {}) {
       setNavBusy(true);
       try {
         if (scent) {
-          await captureScentReturnPose(gdmPose, mapMeta);
+          await captureScentReturnPose(pose, mapMeta);
         } else {
           clearScentReturn();
         }
@@ -248,6 +267,7 @@ export default function useScentMissionNav({ onSelectWard } = {}) {
           isNavigating: true,
           scentMission: Boolean(scent),
           mode: "select",
+          ...(odor ? { sprayFirst: false, sprayChannel: null } : {}),
         });
         onSelectWard?.(ward.id);
         setNavUi((prev) => ({
@@ -256,7 +276,9 @@ export default function useScentMissionNav({ onSelectWard } = {}) {
           selectedId: ward.id,
           dropPin: null,
         }));
-        if (scent) {
+        if (odor) {
+          announceOdorDepart();
+        } else if (scent) {
           announceScentMission(ward);
         } else {
           announceMoveTo(ward);
@@ -271,7 +293,7 @@ export default function useScentMissionNav({ onSelectWard } = {}) {
         setNavBusy(false);
       }
     },
-    [gdmPose, mapMeta, navUi, onSelectWard]
+    [mapMeta, navUi, onSelectWard, poseRef]
   );
 
   return {

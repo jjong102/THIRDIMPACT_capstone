@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import { fragranceBridgePlugin } from './vite.fragranceBridge.js'
@@ -34,6 +35,10 @@ export default defineConfig(({ mode }) => {
     ],
     server: {
       host: true,
+      https: {
+        key: fs.readFileSync(new URL('./certs/key.pem', import.meta.url)),
+        cert: fs.readFileSync(new URL('./certs/cert.pem', import.meta.url)),
+      },
       proxy: {
         '/api/fragrance': 'http://127.0.0.1:5174',
         '/api/mqtt': 'http://127.0.0.1:5175',

@@ -14,6 +14,7 @@ dist-ssr
 
 server/.device-state.json
 server/.device-state.json.tmp
+certs/
 
 # Editor directories and files
 .vscode/*

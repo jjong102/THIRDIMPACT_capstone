@@ -6,6 +6,7 @@ export default function useTtsSpeak() {
   const [speaking, setSpeaking] = useState(false);
   const aliveRef = useRef(true);
   const generationRef = useRef(0);
+  const retainRef = useRef(false);
 
   useEffect(() => {
     aliveRef.current = true;
@@ -13,7 +14,10 @@ export default function useTtsSpeak() {
     return () => {
       aliveRef.current = false;
       generationRef.current += 1;
-      stopSpeaking();
+      // 향 설정 안내는 창이 닫힌 뒤에도 스피커에서 끝까지 재생한다.
+      if (!retainRef.current) {
+        stopSpeaking();
+      }
     };
   }, []);
 
@@ -33,5 +37,13 @@ export default function useTtsSpeak() {
     return stopSpeaking();
   }, []);
 
-  return { speaking, speak, stop };
+  const retain = useCallback(() => {
+    retainRef.current = true;
+  }, []);
+
+  const release = useCallback(() => {
+    retainRef.current = false;
+  }, []);
+
+  return { speaking, speak, stop, retain, release };
 }

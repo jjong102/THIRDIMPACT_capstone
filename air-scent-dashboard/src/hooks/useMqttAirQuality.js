@@ -91,6 +91,49 @@ function buildState(data, health = null) {
   };
 }
 
+function roomKey(rooms) {
+  return Object.keys(rooms ?? {})
+    .sort()
+    .map((id) => {
+      const room = rooms[id] ?? {};
+      return [
+        id,
+        room.label ?? "",
+        room.tone ?? "",
+        room.isOrange ? 1 : 0,
+        room.confidence ?? "",
+        room.raw ?? "",
+        room.demo ? 1 : 0,
+      ].join(":");
+    })
+    .join("|");
+}
+
+function logsKey(logs) {
+  if (!logs?.length) return "";
+  const last = logs[logs.length - 1] ?? {};
+  return `${logs.length}:${last.received_at ?? last.receivedAt ?? ""}:${last.label ?? last.state ?? ""}`;
+}
+
+/** 폴링마다 새 객체가 생겨도, 화면이 쓰는 값이 같으면 이전 state 를 유지한다. */
+function sameAir(a, b) {
+  return (
+    a.connected === b.connected &&
+    a.mqttConnected === b.mqttConnected &&
+    a.label === b.label &&
+    a.confidence === b.confidence &&
+    a.isOrange === b.isOrange &&
+    a.tone === b.tone &&
+    a.receivedAt === b.receivedAt &&
+    a.error === b.error &&
+    a.hasData === b.hasData &&
+    a.roomId === b.roomId &&
+    a.demo === b.demo &&
+    roomKey(a.rooms) === roomKey(b.rooms) &&
+    logsKey(a.logs) === logsKey(b.logs)
+  );
+}
+
 /** 10초 주기 사이·브리지 재시작 직후에도 마지막 Fresh Air 등을 유지 */
 function mergeSticky(prev, next) {
   const logs = next.logs?.length ? next.logs : prev.logs;
@@ -129,17 +172,25 @@ export default function useMqttAirQuality() {
         if (cancelled) return;
 
         const next = buildState(data, health);
-        setAirQuality((prev) => mergeSticky(prev, next));
+        setAirQuality((prev) => {
+          const merged = mergeSticky(prev, next);
+          return sameAir(prev, merged) ? prev : merged;
+        });
       } catch (error) {
         if (cancelled) return;
 
         // 네트워크 순간 실패 시에도 마지막 분류값 유지
-        setAirQuality((prev) => ({
-          ...prev,
-          connected: false,
-          mqttConnected: false,
-          error: error.message,
-        }));
+        setAirQuality((prev) => {
+          if (!prev.connected && !prev.mqttConnected && prev.error === error.message) {
+            return prev;
+          }
+          return {
+            ...prev,
+            connected: false,
+            mqttConnected: false,
+            error: error.message,
+          };
+        });
       }
     };
 

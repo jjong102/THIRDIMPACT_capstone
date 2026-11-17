@@ -146,11 +146,23 @@ function livingSensorStatus(mqttAirQuality) {
 }
 
 const LIVING_DEMO_SCENTS = [
-  { id: "fresh", label: "Fresh Air", hint: "공기" },
-  { id: "odor", label: "odor", hint: "악취" },
-  { id: "orange", label: "Orange", hint: "오렌지" },
-  { id: "mint", label: "Peppermint", hint: "페퍼민트" },
+  { id: "orange", label: "오렌지" },
+  { id: "lavender", label: "라벤더" },
+  { id: "mint", label: "페퍼민트" },
+  { id: "odor", label: "악취" },
+  { id: "fresh", label: "무향" },
 ];
+
+function demoIdFromLabel(label) {
+  const text = String(label ?? "").trim().toLowerCase();
+  if (!text) return null;
+  if (/odor|악취|vinegar|식초/.test(text)) return "odor";
+  if (/lavender|라벤더/.test(text)) return "lavender";
+  if (/orange|오렌지/.test(text)) return "orange";
+  if (/mint|민트|peppermint/.test(text)) return "mint";
+  if (/fresh|\bair\b|공기|무향/.test(text)) return "fresh";
+  return sensorLabelTone(text);
+}
 
 function describeSttStatus(payload) {
   if (!payload?.ok) {
@@ -425,12 +437,10 @@ function MorePage({
     [mqttAirQuality]
   );
 
-  const livingDemoId = useMemo(() => {
-    const label = displayWardScentLabel(mqttAirQuality?.label) ?? mqttAirQuality?.label ?? "";
-    const tone = sensorLabelTone(label);
-    if (tone === "lavender") return "odor";
-    return tone;
-  }, [mqttAirQuality]);
+  const livingDemoId = useMemo(
+    () => demoIdFromLabel(mqttAirQuality?.label),
+    [mqttAirQuality]
+  );
 
   /** demoId: fresh · odor · orange · mint — 센서 원래 라벨로는 서버가 바꾼다. */
   const applyLivingDemo = async (demoId) => {
@@ -908,13 +918,23 @@ function MorePage({
                 {livingStatus.sourceLabel}
               </span>
               <strong>
-                {livingStatus.label
-                  ? `${scentLabel(livingStatus.label)}${
+                {(() => {
+                  const demoName = LIVING_DEMO_SCENTS.find((item) => item.id === livingDemoId)?.label;
+                  if (demoName) {
+                    return `${demoName}${
                       livingStatus.confidence != null
                         ? ` ${Math.round(livingStatus.confidence)}%`
                         : ""
-                    }`
-                  : "값 없음"}
+                    }`;
+                  }
+                  return livingStatus.label
+                    ? `${scentLabel(livingStatus.label)}${
+                        livingStatus.confidence != null
+                          ? ` ${Math.round(livingStatus.confidence)}%`
+                          : ""
+                      }`
+                    : "값 없음";
+                })()}
               </strong>
             </div>
             {livingStatus.isDemo && livingStatus.liveLabel ? (
@@ -962,7 +982,6 @@ function MorePage({
                     onClick={() => applyLivingDemo(option.id)}
                   >
                     <strong>{option.label}</strong>
-                    <span>{option.hint}</span>
                   </button>
                 );
               })}

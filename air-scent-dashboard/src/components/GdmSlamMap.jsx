@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Bot, House } from "lucide-react";
 
 import useActiveRobotMap from "../hooks/useActiveRobotMap";
-import useGdmRobotPose from "../hooks/useGdmRobotPose";
+import useGdmRobotPose, { useGdmMapStamp } from "../hooks/useGdmRobotPose";
 import {
   GDM_FLOORPLAN_URL,
   computeContainLayout,
@@ -12,10 +12,57 @@ import {
   poseToMapPercent,
   roomsToWards,
 } from "../services/gdmMap";
-import { getScentVisual, readingForWard, isKitchenWard } from "../utils/scentVisual";
+import { getScentVisual, readingForWard, isKitchenWard, applyWardJudgment } from "../utils/scentVisual";
+import useWardJudgment from "../hooks/useWardJudgment";
 import { wardDisplayName } from "../utils/wardStorage";
 import MapZoneOverlay from "./MapZoneOverlay";
 import "../pages/MovePage.css";
+
+function SlamRobotMarker({ mapLayout, mapMeta }) {
+  const { pose } = useGdmRobotPose(true);
+  const live = useMemo(() => {
+    if (!mapLayout) return null;
+    return poseToMapPercent(
+      pose,
+      mapLayout.naturalW,
+      mapLayout.naturalH,
+      mapMeta
+    );
+  }, [pose, mapLayout, mapMeta]);
+
+  if (!live?.live || !mapLayout) return null;
+  const screen = mapPercentToContainer(live.x, live.y, mapLayout);
+  if (!screen) return null;
+
+  const title =
+    live.source === "amcl" || live.source === "initialpose"
+      ? "AMCL 로봇 위치"
+      : "GDM 실시간 로봇 위치";
+
+  return (
+    <div
+      className="slam-robot live"
+      style={{
+        left: `${screen.x}%`,
+        top: `${screen.y}%`,
+      }}
+      title={title}
+    >
+      <span
+        className="slam-robot-heading"
+        style={{
+          transform: `rotate(${displayYawCss(live.yaw ?? 0, mapLayout.rotation)}deg)`,
+        }}
+        aria-hidden="true"
+      >
+        <span className="slam-robot-nose" />
+      </span>
+      <span className="slam-robot-inner">
+        <Bot size={18} strokeWidth={2.4} />
+      </span>
+    </div>
+  );
+}
 
 /**
  * Read-only GDM floorplan with robot pose, room outlines, and ward scent markers.
@@ -37,7 +84,8 @@ function GdmSlamMap({
   const [mapMeta, setMapMeta] = useState(null);
   const [roomPolys, setRoomPolys] = useState([]);
 
-  const { pose: gdmPose, status: gdmStatus } = useGdmRobotPose(true);
+  const mapStamp = useGdmMapStamp();
+  const wardJudgment = useWardJudgment();
   const robotMap = useActiveRobotMap();
 
   useEffect(() => {
@@ -114,30 +162,15 @@ function GdmSlamMap({
     return () => observer.disconnect();
   }, [mapReady, updateLayout]);
 
-  const liveRobotMap = useMemo(() => {
-    if (!mapLayout) return null;
-    return poseToMapPercent(
-      gdmPose,
-      mapLayout.naturalW,
-      mapLayout.naturalH,
-      mapMeta
-    );
-  }, [gdmPose, mapLayout, mapMeta]);
-
-  const robotMapPos = liveRobotMap?.live ? liveRobotMap : null;
-  const robotScreen = robotMapPos
-    ? mapPercentToContainer(robotMapPos.x, robotMapPos.y, mapLayout)
-    : null;
-
-  const fallbackReading =
-    mqttAirQuality?.hasData || mqttAirQuality?.label
-      ? {
-          label: mqttAirQuality.label,
-          confidence: mqttAirQuality.confidence,
-          isOrange: mqttAirQuality.isOrange,
-          tone: mqttAirQuality.tone,
-        }
-      : null;
+  const fallbackReading = useMemo(() => {
+    if (!(mqttAirQuality?.hasData || mqttAirQuality?.label)) return null;
+    return {
+      label: mqttAirQuality.label,
+      confidence: mqttAirQuality.confidence,
+      isOrange: mqttAirQuality.isOrange,
+      tone: mqttAirQuality.tone,
+    };
+  }, [mqttAirQuality]);
 
   const wardVisuals = useMemo(() => {
     const rooms = mqttAirQuality?.rooms ?? {};
@@ -164,8 +197,8 @@ function GdmSlamMap({
       });
     }
 
-    return map;
-  }, [wards, mqttAirQuality, fallbackReading]);
+    return applyWardJudgment(map, wards, wardJudgment);
+  }, [wards, mqttAirQuality, fallbackReading, wardJudgment]);
 
   return (
     <div
@@ -189,7 +222,7 @@ function GdmSlamMap({
             className={`slam-map-image ${mapReady ? "ready" : ""}`}
             src={
               robotMap.imageUrl ??
-              `${GDM_FLOORPLAN_URL}?t=${gdmStatus.map ?? "map"}`
+              `${GDM_FLOORPLAN_URL}?t=${mapStamp ?? "map"}`
             }
             alt=""
             draggable={false}
@@ -333,14 +366,14 @@ function GdmSlamMap({
                   className="slam-local-scent"
                   cx={cx}
                   cy={cy}
-                  r={radius}
+                  r={radius * (visual.scale ?? 1)}
                   fill={`url(#home-scent-grad-${ward.id})`}
                 />
                 <circle
                   className="slam-local-scent-core"
                   cx={cx}
                   cy={cy}
-                  r={radius * 0.42}
+                  r={radius * 0.42 * (visual.scale ?? 1)}
                   fill={visual.glow}
                 />
               </g>
@@ -351,34 +384,7 @@ function GdmSlamMap({
 
       <MapZoneOverlay mapLayout={mapLayout} mapMeta={mapMeta} />
 
-      {robotScreen ? (
-        <div
-          className="slam-robot live"
-          style={{
-            left: `${robotScreen.x}%`,
-            top: `${robotScreen.y}%`,
-          }}
-          title={
-            robotMapPos?.source === "amcl" ||
-            robotMapPos?.source === "initialpose"
-              ? "AMCL 로봇 위치"
-              : "GDM 실시간 로봇 위치"
-          }
-        >
-          <span
-            className="slam-robot-heading"
-              style={{
-                transform: `rotate(${displayYawCss(robotMapPos?.yaw ?? 0, mapLayout?.rotation)}deg)`,
-              }}
-            aria-hidden="true"
-          >
-            <span className="slam-robot-nose" />
-          </span>
-          <span className="slam-robot-inner">
-            <Bot size={18} strokeWidth={2.4} />
-          </span>
-        </div>
-      ) : null}
+      <SlamRobotMarker mapLayout={mapLayout} mapMeta={mapMeta} />
 
       {wards.map((ward) => {
         const active = ward.id === selectedWardId;
@@ -408,6 +414,7 @@ function GdmSlamMap({
                   ["--aura-glow"]: visual.glow,
                   ["--aura-soft"]: visual.soft,
                   ["--aura-color"]: visual.color,
+                  ["--aura-scale"]: visual.scale ?? 1,
                 }}
                 aria-hidden="true"
               >
@@ -417,7 +424,7 @@ function GdmSlamMap({
             )}
             {hasScent && (
               <div className="slam-scent-burst" aria-hidden="true">
-                {[0, 60, 120, 180, 240, 300].map((angle, index) => (
+                {[0, 60, 120, 180, 240, 300].filter((_, i) => i % (visual.burstStep ?? 1) === 0).map((angle, index) => (
                   <span
                     key={angle}
                     className="slam-scent-burst-emoji"
@@ -466,4 +473,4 @@ function GdmSlamMap({
   );
 }
 
-export default GdmSlamMap;
+export default memo(GdmSlamMap);

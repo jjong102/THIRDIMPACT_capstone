@@ -24,6 +24,9 @@ import threading
 import time
 import urllib.request
 
+from tts_speak import PURIFY_AND_SPRAY_START, SPRAY_START, speak_wait
+
+DEMO_SCENT_URL = os.environ.get("MQTT_DEMO_URL", "http://127.0.0.1:5175/api/mqtt/demo-scent")
 CHANNELS = ("mint", "lavender", "orange")            # MIST1 · MIST2 · MIST3 (fragranceCommand.js MIST_CHANNELS)
 WARD_NAME = {"mint": "peppermint", "lavender": "lavender", "orange": "orange"}
 MIST_NAME = {"mint": "MNT", "lavender": "LVD", "orange": "ORG"}   # 펌웨어 air_control 2.1 채널 이름
@@ -72,16 +75,23 @@ class ArrivalSequence:
             return dict(self._status)
 
     def start(self, purify_sec: float | None = None, spray_sec: float | None = None,
-              reason: str = "arrival", go_around: bool = True) -> dict:
+              reason: str = "arrival", go_around: bool = True, spray_first: bool = False,
+              channel: str | None = None) -> dict:
         if self.running():
             return {"ok": False, "error": "이미 진행 중", "status": self.status()}
         self._stop.clear()
         p = self.purify_sec if purify_sec is None else max(0.0, float(purify_sec))
         s = self.spray_sec if spray_sec is None else max(0.0, float(spray_sec))
-        self._thread = threading.Thread(target=self._run, args=(p, s, reason, go_around),
-                                        name="arrival-sequence", daemon=True)
+        scent = channel if channel in CHANNELS else None
+        self._thread = threading.Thread(
+            target=self._run,
+            args=(p, s, reason, go_around, bool(spray_first), scent),
+            name="arrival-sequence",
+            daemon=True,
+        )
         self._thread.start()
-        return {"ok": True, "purify_sec": p, "spray_sec": s, "reason": reason}
+        return {"ok": True, "purify_sec": 0 if spray_first else p, "spray_sec": s,
+                "reason": reason, "spray_first": bool(spray_first), "channel": scent}
 
     def stop(self, wait: float = 5.0) -> dict:
         """진행 중이면 멈추고 청정기·발향을 끈다. 안 돌 때는 아무것도 안 한다 (/go_around 는 부른 쪽이 정한다)."""
@@ -129,23 +139,62 @@ class ArrivalSequence:
             return []
 
     # ------------------------------------------------------------ 순서
-    def _run(self, purify_sec: float, spray_sec: float, reason: str, go_around: bool) -> None:
+    def _run(self, purify_sec: float, spray_sec: float, reason: str, go_around: bool,
+             spray_first: bool = False, channel: str | None = None) -> None:
         finished = False
         try:
-            self._set("purify", until=time.time() + purify_sec, reason=reason)
-            self.log(f"① 청정 시작 {purify_sec:.0f}초 ({reason})")
-            self._fragrance(["FAN ON", "MIST OFF"], {"airPurifierOn": True, "fragranceOn": False,
-                                        "fragranceDiffusing": False,
-                                        "fragranceChannels": {c: False for c in CHANNELS}})
-            if self._stop.wait(purify_sec):
+            if spray_first:
+                self.log(f"발향부터 시작 ({reason})")
+            else:
+                # 악취 도착: 청정기는 30초. 그 사이 시연 수치는 15%까지 내리고, 끝나면 설정된 향 시연으로 넘긴다.
+                purify_sec = 30.0
+                if not self._speak_then(PURIFY_AND_SPRAY_START):
+                    return
+                self._set("purify", until=time.time() + purify_sec, reason=reason)
+                self.log(f"① 청정 시작 {purify_sec:.0f}초 ({reason})")
+                self._fragrance(["FAN ON", "MIST OFF"], {"airPurifierOn": True, "fragranceOn": False,
+                                            "fragranceDiffusing": False,
+                                            "fragranceChannels": {c: False for c in CHANNELS}})
+                self._signal_demo_purify()
+                if self._stop.wait(purify_sec):
+                    return
+                scent_name = self._designated_channel()
+                mist_cmd = "MIST " + MIST_NAME[scent_name]
+                self.log(f"② 발향 시작 [{scent_name}] — 5초 뒤 시연")
+                self._fragrance(
+                    ["FAN OFF", mist_cmd],
+                    {
+                        "airPurifierOn": False,
+                        "fragranceOn": True,
+                        "fragranceDiffusing": True,
+                        "fragranceChannels": {c: c == scent_name for c in CHANNELS},
+                    },
+                )
+                self._set("spray", until=time.time() + 35.0, reason=reason, scent=[scent_name])
+                self._ward_cmd(f"SPRAY 35 {WARD_NAME[scent_name]}")
+                if self._stop.wait(5.0):
+                    return
+                self._post_demo(
+                    {"scentRise": True, "label": scent_name},
+                    f"{scent_name} 시연 시작, 95~96%까지",
+                )
+                if self._stop.wait(30.0):
+                    return
+                finished = True
                 return
 
-            chosen = self._choose_channels()
+            chosen = [channel] if channel in CHANNELS else self._choose_channels()
             # 동시 발향: 펌웨어(air_control 2.1)가 채널을 0.3초씩 늦춰 켜서 돌입 전류를 피하고,
             # 켜진 채널은 끊김 없이 계속 분무한다.
             fan_cmd = "FAN ON" if self.purifier_during_spray else "FAN OFF"
             mist_cmd = "MIST ALL" if len(chosen) == len(CHANNELS) else "MIST " + "+".join(MIST_NAME[c] for c in chosen)
+            if spray_first and not self._speak_then(SPRAY_START):
+                return
             self.log(f"② 발향 {spray_sec:.0f}초 {chosen} → {fan_cmd}, {mist_cmd} (동시)")
+            if len(chosen) == 1:
+                self._show_demo_scent(chosen[0])
+            else:
+                self._signal_demo_rise()
             self._fragrance([fan_cmd, mist_cmd], {"airPurifierOn": self.purifier_during_spray, "fragranceOn": True,
                                                   "fragranceDiffusing": True,
                                                   "fragranceChannels": {c: c in chosen for c in CHANNELS}})
@@ -168,6 +217,14 @@ class ArrivalSequence:
                     self.log(f"/go_around 실패: {exc!r}")
             self._set("done" if finished else "stopped", reason=reason)
 
+    def _speak_then(self, text: str) -> bool:
+        """안내를 끝까지 읽은 뒤에 다음 동작을 한다. 중간에 멈추면 False."""
+        if self._stop.is_set():
+            return False
+        self.log(f"안내: {text}")
+        speak_wait(text)
+        return not self._stop.is_set()
+
     # ------------------------------------------------------------ 도우미
     def _set(self, phase: str, **extra) -> None:
         with self._lock:
@@ -186,6 +243,29 @@ class ArrivalSequence:
         self._fragrance(["FAN OFF", "MIST OFF"], {"airPurifierOn": False, "fragranceOn": False, "fragranceDiffusing": False,
                                      "fragranceChannels": {c: False for c in CHANNELS}})
 
+    def _show_demo_scent(self, channel: str) -> None:
+        """분사 시작. 같은 향 시연이면 그 퍼센트에서 다시 올라가고, 아니면 그 향을 켠다."""
+        self._post_demo({"label": channel, "rise": True}, f"시연 향 상승: {channel}")
+
+    def _signal_demo_rise(self) -> None:
+        self._post_demo({"rise": True}, "시연 퍼센트 상승")
+
+    def _signal_demo_purify(self) -> None:
+        self._post_demo({"purify": True}, "악취 시연 15%로 하강")
+
+    def _post_demo(self, payload: dict, ok_log: str) -> None:
+        body = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            DEMO_SCENT_URL,
+            data=body,
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            urllib.request.urlopen(req, timeout=2).read()
+            self.log(ok_log)
+        except Exception as exc:  # noqa: BLE001
+            self.log(f"시연 향 표시 실패: {exc!r}")
+
     def _fragrance(self, commands: list[str], state: dict) -> bool:
         self.log(f"  → 아두이노 {commands}")
         body = json.dumps({"commands": commands, "state": state}).encode("utf-8")
@@ -199,6 +279,20 @@ class ArrivalSequence:
         except Exception as exc:  # noqa: BLE001
             self.log(f"  ⚠ fragrance_bridge 연결 실패 {commands}: {exc!r}")
             return False
+
+    def _designated_channel(self) -> str:
+        """화면에 잡아 둔 향 하나. 페퍼민트면 페퍼민트 시연 버튼과 같은 라벨."""
+        if self.scent in CHANNELS:
+            return self.scent
+        try:
+            with urllib.request.urlopen(f"{self.fragrance_url}/api/fragrance/state", timeout=5) as r:
+                blend = (json.loads(r.read().decode("utf-8")).get("state") or {}).get("fragranceBlend") or {}
+            best = max(CHANNELS, key=lambda name: float(blend.get(name) or 0))
+            if float(blend.get(best) or 0) > 0:
+                return best
+        except Exception as exc:  # noqa: BLE001
+            self.log(f"  설정 향 읽기 실패 → lavender: {exc!r}")
+        return "lavender"
 
     def _choose_channels(self) -> list[str]:
         if self.scent == "all":

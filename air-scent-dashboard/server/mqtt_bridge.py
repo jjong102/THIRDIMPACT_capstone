@@ -16,6 +16,10 @@ import urllib.request
 from collections import deque
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from tts_speak import ODOR_DEPART, scent_weak, speak  # noqa: E402
 
 try:
     import paho.mqtt.client as mqtt
@@ -35,11 +39,13 @@ PAYLOAD_RE = re.compile(r"([A-Za-z가-힣_][A-Za-z가-힣_ ]*?)\s*\(\s*(\d+(?:\.
 FRESH_RE = re.compile(r"fresh|clean|무취|청정|air", re.IGNORECASE)
 # 센서(ESP32 BME688)는 학습 모델의 클래스 이름을 그대로 보내는데, 이 이름이 실제 향과 어긋나 있다
 # (ward_bme688 학습 라벨 뒤바뀜). 센서를 다시 굽기 전까지 옛 라벨은 여기서만 해석한다.
-#   "woody" · "citrus" → orange   "musk" → mint   "floral" · "lavender" · "odor" → lavender (시연에선 악취)
+#   "woody" · "citrus" → orange   "musk" → mint
+#   "floral" · "odor" · "악취" → odor    "lavender" · "라벤더" → lavender
 # 프론트 src/utils/sensorLabels.js 와 같은 규칙. 새 이름(orange / mint / lavender)도 알아듣는다.
 SENSOR_TONE_RULES = (
     ("orange", re.compile(r"orange|오렌지|woody|citrus", re.IGNORECASE)),
-    ("lavender", re.compile(r"lavender|라벤더|floral|odor|악취", re.IGNORECASE)),
+    ("odor", re.compile(r"odor|악취|floral|vinegar|식초", re.IGNORECASE)),
+    ("lavender", re.compile(r"lavender|라벤더", re.IGNORECASE)),
     ("mint", re.compile(r"mint|민트|musk", re.IGNORECASE)),
 )
 
@@ -90,12 +96,17 @@ def append_log(kind: str, text: str) -> None:
 LIVING_ROOM_IDS = ("default", "room_1", "room1")
 # 더보기 시연 버튼 id → 시연 중 보여 줄 라벨 (MQTT 로 내보내지 않고 대시보드 안에서만 쓴다)
 DEMO_LABELS = {
-    "fresh": "Fresh Air",
-    "fresh air": "Fresh Air",
-    "air": "Fresh Air",
+    "fresh": "무향",
+    "fresh air": "무향",
+    "air": "무향",
+    "무향": "무향",
     "odor": "odor",
     "orange": "Orange",
     "mint": "Mint",
+    "peppermint": "Mint",
+    "페퍼민트": "Mint",
+    "lavender": "Lavender",
+    "라벤더": "Lavender",
 }
 demo_generation = 0
 demo_override: dict | None = None
@@ -110,7 +121,7 @@ def classify_tone(label: str | None) -> str:
     if not label:
         return "unknown"
     # Fresh Air / air 단독을 향 라벨보다 먼저
-    if re.search(r"fresh\s*air|fresh|clean|무취|청정|(?<![A-Za-z])air(?![A-Za-z])", label, re.IGNORECASE):
+    if re.search(r"fresh\s*air|fresh|clean|무취|무향|청정|(?<![A-Za-z])air(?![A-Za-z])", label, re.IGNORECASE):
         return "fresh"
     for tone, pattern in SENSOR_TONE_RULES:
         if pattern.search(label):
@@ -155,10 +166,10 @@ def room_id_from_topic(topic: str) -> str:
     return suffix or "default"
 
 
-def _demo_entry(label: str, confidence: int) -> dict:
+def _demo_entry(label: str, confidence: int | None) -> dict:
     tone = classify_tone(label)
     stamp = datetime.now(timezone.utc).isoformat()
-    raw = f"{label} ({confidence}%)"
+    raw = label if confidence is None else f"{label} ({confidence}%)"
     return {
         "raw": raw,
         "label": label,
@@ -172,7 +183,7 @@ def _demo_entry(label: str, confidence: int) -> dict:
     }
 
 
-def _apply_demo(label: str, confidence: int) -> dict:
+def _apply_demo(label: str, confidence: int | None, announce: bool = True) -> dict:
     global latest, demo_override
     entry = _demo_entry(label, confidence)
     demo_override = dict(entry)
@@ -181,56 +192,219 @@ def _apply_demo(label: str, confidence: int) -> dict:
         copied = dict(entry)
         copied["room_id"] = room_id
         rooms[room_id] = copied
-    _append_log_locked("demo", f"[시연] {entry['raw']}")
+    if announce:
+        _append_log_locked("demo", f"[시연] {entry['raw']}")
     return entry
 
 
-def _ramp_steps(target: int) -> list[int]:
-    goal = max(10, min(98, int(target)))
-    peak = min(98, goal + random.randint(0, 4))
-    fractions = (0.27, 0.45, 0.70, 1.0)
-    steps: list[int] = []
-    prev = 0
-    remaining = len(fractions)
-    for index, frac in enumerate(fractions):
-        remaining -= 1
-        if remaining == 0:
-            value = peak
+# 시연 향: 17~18에서 30초 동안 92~97까지 오른 뒤, 200초 동안 70까지 내려간다.
+# 70 아래도 분사가 시작될 때까지 계속 내려가고, 분사가 시작되면 다시 올라간다. 그 뒤 200초 하강을 반복한다.
+DEMO_RISE_SEC = 30
+DEMO_FALL_SEC = 200
+DEMO_FALL_TO = 70
+DEMO_FLOOR = 10
+DEMO_TICK_SEC = 1.0
+# 악취 시연만: 공기청정기가 켜지면 30초 동안 15%까지 내린다. 향 버튼 곡선은 그대로.
+DEMO_ODOR_CLEAR_SEC = 30
+DEMO_ODOR_CLEAR_TO = 15
+NAV_UI_URL = os.environ.get("NAV_UI_URL", "http://127.0.0.1:5179/api/nav/ui")
+NAV_GOAL_URL = os.environ.get("NAV_GOAL_URL", "http://127.0.0.1:5179/api/nav/goal")
+# 이 라벨만 70%에 닿으면 그 향으로 발향하러 출발한다.
+DEMO_SPRAY_CHANNEL = {"Orange": "orange", "Lavender": "lavender", "Mint": "mint"}
+_demo_rise = threading.Event()
+_demo_purify = threading.Event()
+_demo_scent = threading.Event()
+_demo_scent_name: str | None = None
+
+
+def _smoothstep(amount: float) -> float:
+    t = max(0.0, min(1.0, amount))
+    return t * t * (3.0 - 2.0 * t)
+
+
+def _demo_bounds() -> tuple[int, int]:
+    return random.randint(17, 18), random.randint(92, 97)
+
+
+def _nav_json(url: str, payload: dict, method: str) -> dict | None:
+    try:
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            method=method,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=3) as response:
+            body = response.read().decode("utf-8")
+        return json.loads(body) if body else {"ok": True}
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        print(f"[mqtt-bridge] 주행 요청 실패: {exc}", file=sys.stderr)
+        return None
+
+
+def _depart_to_spray(channel: str) -> bool:
+    """70%가 되면 그 채널로 발향부터 하도록 표시하고, 저장된 와드 목표로 출발한다."""
+    marked = _nav_json(
+        NAV_UI_URL,
+        {"sprayFirst": True, "sprayChannel": channel},
+        "PUT",
+    )
+    if not marked or marked.get("ok") is False:
+        return False
+    sent = _nav_json(NAV_GOAL_URL, {"x": 0, "y": 0, "yaw": 0, "frame_id": "map"}, "POST")
+    if sent and sent.get("ok"):
+        speak(scent_weak(channel))
+        return True
+    _nav_json(NAV_UI_URL, {"sprayFirst": False, "sprayChannel": None}, "PUT")
+    return False
+
+
+def _depart_to_purify() -> bool:
+    """악취는 발향부터가 아니라, 도착 후 청정부터 하도록 표시를 지우고 출발한다."""
+    cleared = _nav_json(
+        NAV_UI_URL,
+        {"sprayFirst": False, "sprayChannel": None},
+        "PUT",
+    )
+    if not cleared or cleared.get("ok") is False:
+        return False
+    sent = _nav_json(NAV_GOAL_URL, {"x": 0, "y": 0, "yaw": 0, "frame_id": "map"}, "POST")
+    ok = bool(sent and sent.get("ok"))
+    if ok:
+        speak(ODOR_DEPART)
+    return ok
+
+
+def _dispatch_demo(channel: str | None) -> None:
+    sent = _depart_to_spray(channel) if channel else _depart_to_purify()
+    with latest_lock:
+        if sent:
+            action = "발향" if channel else "청정"
+            _append_log_locked("demo", f"[시연] {DEMO_FALL_TO}% — 와드로 출발해 {action}")
         else:
-            value = int(round(peak * frac)) + random.randint(-3, 3)
-            value = max(prev + 4, value)
-            value = min(peak - remaining * 3, value)
-        value = max(1, min(peak, value))
-        steps.append(value)
-        prev = value
-    steps[-1] = peak
-    return steps
+            _append_log_locked("demo", f"[시연] {DEMO_FALL_TO}% — 출발하지 못했습니다")
 
 
-def _ramp_demo(generation: int, label: str, steps: list[int]) -> None:
-    for index, confidence in enumerate(steps):
-        if index == 0:
-            continue
+def _run_demo_curve(
+    generation: int,
+    label: str,
+    start: int,
+    peak: int,
+    depart: bool,
+    channel: str | None,
+) -> None:
+    """향: 오름 30초 → 70까지 200초 → 분사 때 다시 상승 → 다시 200초 하강.
+    악취: 청정기가 켜지면 30초 동안 15%로 내린 뒤, 이어서 뿌린 향은
+    95~96%까지 오른 다음 같은 하강으로 70 아래까지 내려간다."""
+    level = float(start)
+    shown = start
+    phase = "rise"
+    rise_from = float(start)
+    rise_i = 0
+    fall_from = float(peak)
+    fall_i = 0
+    clear_from = float(start)
+    clear_i = 0
+    dispatched = False
+    tick = 0
+    odor = label == "odor"
+    shown_label = label
+
+    while True:
+        rising_now = _demo_rise.wait(DEMO_TICK_SEC)
+        purify_now = _demo_purify.is_set()
+        scent_now = _demo_scent.is_set()
         if generation != demo_generation:
             return
-        time.sleep(random.uniform(0.75, 1.45))
-        if generation != demo_generation:
-            return
+        if scent_now:
+            _demo_scent.clear()
+            next_label = _demo_scent_name
+            if next_label:
+                shown_label = next_label
+                odor = False
+                # 이미 출동해 뿌린 뒤라 70%에서 다시 출발하지 않는다. 숫자만 내려간다.
+                depart = False
+                phase = "rise"
+                rise_from = level
+                rise_i = 0
+                peak = random.randint(95, 96)
+                dispatched = False
+                with latest_lock:
+                    _append_log_locked(
+                        "demo",
+                        f"[시연] 15% 이후 {shown_label} 발향 — {peak}%까지 오른 뒤 70% 아래로 하강",
+                    )
+        if purify_now and odor and phase not in ("clear", "hold"):
+            _demo_purify.clear()
+            phase = "clear"
+            clear_from = level
+            clear_i = 0
+            with latest_lock:
+                _append_log_locked(
+                    "demo",
+                    f"[시연] 청정기 가동 — 악취 {DEMO_ODOR_CLEAR_SEC}초 동안 {DEMO_ODOR_CLEAR_TO}%",
+                )
+        elif purify_now:
+            _demo_purify.clear()
+        if rising_now:
+            _demo_rise.clear()
+            if not odor:
+                phase = "rise"
+                rise_from = level
+                rise_i = 0
+                peak = random.randint(92, 97)
+                if peak <= level:
+                    peak = 97 if level >= 97 else int(round(level)) + 1
+                dispatched = False
+                with latest_lock:
+                    _append_log_locked("demo", f"[시연] 분사 시작 — {label} 다시 상승")
+
+        tick += 1
+        if phase == "clear":
+            clear_i += 1
+            if clear_i >= DEMO_ODOR_CLEAR_SEC:
+                level = float(DEMO_ODOR_CLEAR_TO)
+                phase = "hold"
+            else:
+                level = clear_from + (DEMO_ODOR_CLEAR_TO - clear_from) * _smoothstep(
+                    clear_i / DEMO_ODOR_CLEAR_SEC
+                )
+        elif phase == "hold":
+            level = float(DEMO_ODOR_CLEAR_TO)
+        elif phase == "rise":
+            rise_i += 1
+            if rise_i >= DEMO_RISE_SEC:
+                level = float(peak)
+                phase = "fall"
+                fall_from = level
+                fall_i = 0
+            else:
+                risen = rise_from + (peak - rise_from) * _smoothstep(rise_i / DEMO_RISE_SEC)
+                level = max(level, min(float(peak), risen))
+        else:
+            rate = max((fall_from - DEMO_FALL_TO) / DEMO_FALL_SEC, 0.05)
+            level = max(float(DEMO_FLOOR), level - rate)
+            fall_i += 1
+            if level <= DEMO_FALL_TO:
+                phase = "drift"
+            if depart and not dispatched and level <= DEMO_FALL_TO:
+                dispatched = True
+                _dispatch_demo(channel)
+                if generation != demo_generation:
+                    return
+
+        nxt = int(round(level))
+        milestone = tick % 15 == 0 or (phase == "fall" and fall_i == 0)
+        shown = nxt
         with latest_lock:
             if generation != demo_generation:
                 return
-            _apply_demo(label, confidence)
-
-    if generation != demo_generation:
-        return
-    with latest_lock:
-        if generation != demo_generation:
-            return
-        _append_log_locked("demo", "[시연] 공기청정 및 발향 완료")
+            _apply_demo(shown_label, shown, announce=milestone)
 
 
-def start_living_demo(raw_label: str, target: int | None = None) -> dict:
+def start_living_demo(raw_label: str, target: int | None = None, keep: bool = False) -> dict:
     global demo_generation
+    del target  # 저장해 둔 목표 퍼센트 대신 아래 곡선으로 올린다.
     key = str(raw_label or "").strip().lower()
     label = DEMO_LABELS.get(key)
     if not label:
@@ -239,25 +413,82 @@ def start_living_demo(raw_label: str, target: int | None = None) -> dict:
     if not label:
         raise ValueError("지원하지 않는 향입니다")
 
-    steps = _ramp_steps(54 if target is None else target)
+    if keep:
+        with latest_lock:
+            current = dict(demo_override) if isinstance(demo_override, dict) else None
+        if current and current.get("demo") and current.get("label") == label:
+            return current
+
+    start, peak = _demo_bounds()
+    channel = DEMO_SPRAY_CHANNEL.get(label)
+    depart = bool(channel) or label == "odor"
+    unscented = label == "무향"
+    _demo_rise.clear()
+    _demo_purify.clear()
+    _demo_scent.clear()
     with latest_lock:
         demo_generation += 1
         generation = demo_generation
-        entry = _apply_demo(label, steps[0])
+        entry = _apply_demo(label, None if unscented else start)
+
+    if unscented:
+        return entry
 
     worker = threading.Thread(
-        target=_ramp_demo,
-        args=(generation, label, steps),
-        name="mqtt-demo-ramp",
+        target=_run_demo_curve,
+        args=(generation, label, start, peak, depart, channel),
+        name="mqtt-demo-curve",
         daemon=True,
     )
     worker.start()
-    if classify_tone(label) == "lavender":
+    if re.search(r"odor|악취|vinegar|식초", label, re.IGNORECASE):
         global _live_odor_active
         with latest_lock:
             _live_odor_active = True
-        _trigger_odor_tts()
     return entry
+
+
+def signal_demo_scent(raw_label: str) -> dict | None:
+    """악취가 15%가 된 뒤, 설정된 향으로 95~96%까지 올린 다음 70% 아래로 내린다."""
+    global _demo_scent_name
+    key = str(raw_label or "").strip().lower()
+    label = DEMO_LABELS.get(key) or DEMO_LABELS.get(key.replace(" ", ""))
+    if not label or label in ("odor", "무향"):
+        return None
+    _demo_scent_name = label
+    _demo_scent.set()
+    with latest_lock:
+        return dict(demo_override) if isinstance(demo_override, dict) else None
+
+
+def signal_demo_purify() -> dict | None:
+    """악취 시연 중에 공기청정기가 켜지면 30초 동안 15%로 내린다. 다른 향은 건드리지 않는다."""
+    with latest_lock:
+        current = dict(demo_override) if isinstance(demo_override, dict) else None
+    if not current or not current.get("demo") or current.get("label") != "odor":
+        return current
+    _demo_purify.set()
+    return current
+
+
+def signal_demo_rise(raw_label: str | None) -> dict | None:
+    """분사가 시작되면 지금 시연 퍼센트를 다시 올린다. 다른 향이면 그 향 시연을 새로 켠다."""
+    label = None
+    if raw_label:
+        key = str(raw_label).strip().lower()
+        label = DEMO_LABELS.get(key) or DEMO_LABELS.get(key.replace(" ", ""))
+        if not label:
+            raise ValueError("지원하지 않는 향입니다")
+    with latest_lock:
+        current = dict(demo_override) if isinstance(demo_override, dict) else None
+    if current and current.get("demo") and (label is None or current.get("label") == label) and current.get("label") != "무향":
+        if current.get("label") == "odor":
+            return current
+        _demo_rise.set()
+        return current
+    if not raw_label or label == "무향":
+        return current
+    return start_living_demo(raw_label)
 
 
 def _trigger_odor_tts() -> None:
@@ -314,7 +545,7 @@ def _announce_living_odor(tts_gen: int) -> None:
     if tts_gen != _odor_tts_generation:
         return
     lines = (
-        "거실에서 악취를 감지했습니다.",
+        ODOR_DEPART,
     )
     for text in lines:
         if tts_gen != _odor_tts_generation:
@@ -497,7 +728,7 @@ def on_message(client, userdata, msg) -> None:
         "topic": msg.topic,
         "received_at": stamp,
     }
-    is_odor = parsed.get("tone") == "lavender"
+    is_odor = parsed.get("tone") == "odor"
     start_tts = False
 
     with latest_lock:
@@ -633,6 +864,31 @@ class MqttBridgeHandler(BaseHTTPRequestHandler):
             return
 
         label = payload.get("label")
+        if payload.get("scentRise"):
+            entry = signal_demo_scent("" if label is None else str(label))
+            if not entry:
+                self._send_json(200, {"ok": True, "demo": False})
+                return
+            self._send_json(200, {"ok": True, "demo": True, "scentRise": True, **entry})
+            return
+        if payload.get("purify"):
+            entry = signal_demo_purify()
+            if not entry:
+                self._send_json(200, {"ok": True, "demo": False})
+                return
+            self._send_json(200, {"ok": True, "demo": True, "purify": True, **entry})
+            return
+        if payload.get("rise"):
+            try:
+                entry = signal_demo_rise(None if label is None else str(label))
+            except ValueError as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+                return
+            if not entry:
+                self._send_json(200, {"ok": True, "demo": False})
+                return
+            self._send_json(200, {"ok": True, "demo": True, "rise": True, **entry})
+            return
         if label is None or str(label).strip().lower() in {"", "off", "clear", "live", "real"}:
             clear_living_demo()
             self._send_json(200, {"ok": True, "cleared": True})
@@ -646,7 +902,7 @@ class MqttBridgeHandler(BaseHTTPRequestHandler):
         except (TypeError, ValueError):
             target_n = 54
         try:
-            entry = start_living_demo(str(label), target_n)
+            entry = start_living_demo(str(label), target_n, keep=bool(payload.get("keep")))
         except ValueError as exc:
             self._send_json(400, {"ok": False, "error": str(exc)})
             return
